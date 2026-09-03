@@ -1,0 +1,38 @@
+name: trix
+description: Trix Agent default theme
+
+colors:
+  banner_border: "#4169e1"
+  banner_title: "#7eb8f6"
+  banner_accent: "#8EA8FF"
+  banner_dim: "#545E6B"
+  banner_text: "#c9d1d9"
+  ui_accent: "#7eb8f6"
+  ui_label: "#8EA8FF"
+  ui_ok: "#63D0A6"
+  ui_error: "#F7A072"
+  ui_warn: "#e6a855"
+  prompt: "#c9d1d9"
+  input_rule: "#4169e1"
+  response_border: "#7eb8f6"
+  status_bar_bg: "#151C2F"
+  status_bar_text: "#C9D1D9"
+  status_bar_strong: "#7EB8F6"
+  status_bar_dim: "#5D6672"
+  status_bar_good: "#63D0A6"
+  status_bar_warn: "#E6A855"
+  status_bar_bad: "#F7A072"
+  status_bar_critical: "#FF7A7A"
+  session_label: "#7eb8f6"
+  session_border: "#545E6B"
+  completion_menu_bg: "#151C2F"
+  completion_menu_current_bg: "#324867"
+  selection_bg: "#3A5375"
+  shell_dollar: "#7eb8f6"
+  voice_status_bg: "#151C2F"
+
+branding:
+  agent_name: "Trix Agent"
+  welcome: "Welcome to Trix Agent! Type your message or /help for commands."
+  response_label: " Trix "
+  prompt_symbol: "› "
