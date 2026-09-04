@@ -750,6 +750,21 @@ def test_single_variant_group_skips_the_radio_and_goes_straight_to_its_subblock(
     assert "onProviderChange(group.variants[0] || null)" in html
 
 
+def _css_rule_body(html: str, selector: str) -> str:
+    """Тело CSS-правила для точного селектора — а не первое текстовое
+    совпадение подстроки.
+
+    Прежняя форма (`html.index(selector)` + окно в 60 символов) ловила
+    ЛЮБОЕ упоминание селектора, включая объясняющий комментарий рядом.
+    Стоило дописать в page.py комментарий со ссылкой на соседнее правило —
+    и тест краснел, хотя само правило было на месте (поймано прогоном
+    2026-09-04). Ищем `<селектор> {` , то есть настоящее начало правила.
+    """
+    match = re.search(re.escape(selector) + r"\s*\{([^}]*)\}", html)
+    assert match, f"в отрисованной странице нет правила {selector} {{ ... }}"
+    return match.group(1)
+
+
 def test_field_row_hidden_attribute_actually_hides_it():
     """Owner-observed bug (originally seen on a single-variant group's
     "способ подключения" row, since converted off .field-row entirely —
@@ -762,10 +777,7 @@ def test_field_row_hidden_attribute_actually_hides_it():
     from hermes_cli.setup_wizard.page import render_page
 
     html = render_page()
-    assert ".field-row[hidden]" in html
-    idx = html.index(".field-row[hidden]")
-    window = html[idx : idx + 60]
-    assert "display: none" in window
+    assert "display: none" in _css_rule_body(html, ".field-row[hidden]")
 
 
 def test_provider_auth_choice_hint_only_shown_for_multi_variant_groups():
@@ -1190,10 +1202,7 @@ def test_verdict_hidden_attribute_actually_hides_it():
     from hermes_cli.setup_wizard.page import render_page
 
     html = render_page()
-    assert ".verdict[hidden]" in html
-    idx = html.index(".verdict[hidden]")
-    window = html[idx : idx + 60]
-    assert "display: none" in window
+    assert "display: none" in _css_rule_body(html, ".verdict[hidden]")
 
 
 def test_proxy_telegram_and_key_verdicts_all_start_hidden():

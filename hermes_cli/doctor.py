@@ -1206,6 +1206,11 @@ def run_doctor(args):
 
     issues = []
     manual_issues = []  # issues that can't be auto-fixed
+    # True findings that are NOT this machine's to answer — they never
+    # count toward the verdict a client reads. See DoctorRunResult's
+    # `advisories` docstring in hermes_cli/trix_doctor_verdict.py for the
+    # defect that made this bucket necessary.
+    advisories = []
     fixed_count = 0
 
     print()
@@ -2607,7 +2612,16 @@ def run_doctor(args):
                             "errors with an arborist crash it's a known npm bug — clears "
                             "via a lockfile bump"
                         )
-                    issues.append(
+                    # advisories, NOT issues: these come from packages we
+                    # ship, so they are identical on every client machine,
+                    # `doctor --fix` never runs `npm audit fix`, and for the
+                    # workspace-scoped ones this very function refuses to
+                    # print even a manual command (npm arborist crashes on
+                    # this tree). Nothing on a client machine can clear them.
+                    # In `issues` they made every healthy machine report
+                    # "needs_attention", and the support pass turned that
+                    # into "напишите в поддержку" after a successful setup.
+                    advisories.append(
                         f"{label} has {total} npm "
                         f"{'vulnerability' if total == 1 else 'vulnerabilities'}"
                     )
@@ -3305,7 +3319,23 @@ def run_doctor(args):
         print(color("─" * 60, Colors.GREEN))
         print(color("  All checks passed! 🎉", Colors.GREEN, Colors.BOLD))
 
+    # Printed separately and always — moving these out of `issues` must not
+    # turn into hiding them. They are OURS to answer (ship a bumped
+    # lockfile), not the machine's, so they are listed under a heading that
+    # says so instead of in a list titled "issues to address".
+    if advisories:
+        print()
+        print(color("  Замечания к поставке (не к этой машине):", Colors.DIM))
+        for advisory in advisories:
+            print(color(f"    · {advisory}", Colors.DIM))
+        print(color("    Чинится обновлением продукта, а не действиями здесь.", Colors.DIM))
+
     print()
 
     from hermes_cli.trix_doctor_verdict import DoctorRunResult
-    return DoctorRunResult(issues=issues, manual_issues=manual_issues, fixed_count=fixed_count)
+    return DoctorRunResult(
+        issues=issues,
+        manual_issues=manual_issues,
+        fixed_count=fixed_count,
+        advisories=advisories,
+    )
