@@ -821,20 +821,34 @@ def _commit_staged_replacements(staged) -> None:
                 pass
 
 
-def _print_update_completion(message: str) -> None:
+def _print_update_completion(message: str, *, updated: bool = True) -> None:
     """Print an update outcome plus, when the dashboard launched this run
     with an action id, a terminal receipt line the Desktop can match after
     the dashboard restarts (see #47359 / #58764).
 
-    Перед объявлением успеха проверяется, переживло ли обновление
-    распознавание речи: на процессорах ниже ``x86-64-v2`` пересборка
-    зависимостей возвращает numpy 2.x поверх подобранного рецептом 1.x,
-    и голос умирает молча (см. ``trix_update_numpy``). На нормальной
-    машине это стоит одного импорта и ничего не печатает.
-    """
-    from hermes_cli.trix_update_numpy import repair_numpy_after_update
+    Перед объявлением успеха доводится до конца то, что обновление кода
+    само по себе не делает — и только когда код действительно менялся
+    (``updated``; на «Already up to date» чинить и перезапускать нечего):
 
-    repair_numpy_after_update()
+    * распознавание речи. На процессорах ниже ``x86-64-v2`` пересборка
+      зависимостей возвращает numpy 2.x поверх подобранного рецептом 1.x,
+      и голос умирает молча (см. ``trix_update_numpy``). На нормальной
+      машине это стоит одного импорта и ничего не печатает.
+    * мастер настройки. Обновление перезапускает шлюз и только его, а
+      мастер по замыслу живёт вечно — и держит в памяти код той версии,
+      при которой его запустили (см. ``trix_wizard_restart``).
+
+    Обе строчки печатаются ДО ``message``: иначе они уезжают под
+    «✓ Update complete!» и читаются как приписка к уже объявленному
+    успеху.
+    """
+    if updated:
+        from hermes_cli.trix_update_numpy import repair_numpy_after_update
+        from hermes_cli.trix_wizard_restart import restart_wizard_after_update
+
+        repair_numpy_after_update()
+        for line in restart_wizard_after_update():
+            print(line)
     print(message)
     action_id = os.environ.get("HERMES_ACTION_ID", "")
     if len(action_id) == 32 and all(char in "0123456789abcdef" for char in action_id):
@@ -4045,7 +4059,7 @@ def _cmd_update_impl(args, gateway_mode: bool):
                     print(f"⚠ Venv still unhealthy after repair: {detail_after}")
                     print("  Close all Hermes windows/gateways and re-run: hermes update")
             else:
-                _print_update_completion("✓ Already up to date!")
+                _print_update_completion("✓ Already up to date!", updated=False)
             if runtime_repaired is not None and not _m()._is_windows():
                 print()
                 print(
