@@ -4094,6 +4094,45 @@ def _cmd_update_impl(args, gateway_mode: bool):
                     )
                     sys.exit(1)
 
+            # Релизные теги — ПОСЛЕ применения обновления, и порядок здесь
+            # не косметический.
+            #
+            # Зачем вообще: `git fetch origin <branch>` с явным refspec теги
+            # не приносит, а на поверхностном (`--depth 1`) клоне автоподхват
+            # их не достаёт. Без этого шага версия у клиента навсегда
+            # застревает на той, что была при установке — проверено живьём
+            # 2026-09-04: машина стояла на коммите релиза 0.1.3, а
+            # `hermes --version` отвечал «Trix Agent v0.1.2», потому что
+            # `resolve_local_release_tag` зовёт `git describe --abbrev=0` и
+            # находит ближайший ИМЕЮЩИЙСЯ тег. Тем же неверным ответом
+            # отвечает `verify_install_is_trix.sh`, то есть на вопрос
+            # поддержки «какая у вас версия» и клиент, и машина врут.
+            #
+            # Почему ПОСЛЕ, а не до слияния: поверхностная выборка тега,
+            # указывающего на уже полученный коммит, добавляет ЕМУ
+            # собственную поверхностную прививку, и следующий за ней
+            # `git merge --ff-only` отказывается словами «refusing to merge
+            # unrelated histories» — хотя объект на месте. Воспроизведено
+            # на локальных репозиториях. В первой редакции этот шаг стоял
+            # до слияния и загонял КАЖДОЕ обновление на запасную ветку
+            # `reset --hard`: разрушительный сброс вместо безобидной
+            # перемотки, на ровном месте. Здесь шаг стоит после того, как
+            # обновление уже применено, и повлиять на него не может.
+            #
+            # Refspec узкий (`refs/tags/trix-v*`) и ограничен глубиной,
+            # чтобы не расшить поверхностный клон — ровно ту цену, ради
+            # которой он поверхностный. Провал не останавливает обновление:
+            # без тега продукт работает, он лишь неверно себя называет.
+            tags_result = subprocess.run(
+                git_cmd + ["fetch", "--depth", "1", "origin",
+                           "refs/tags/trix-v*:refs/tags/trix-v*"],
+                cwd=_m().PROJECT_ROOT,
+                capture_output=True,
+                text=True, encoding="utf-8", errors="replace",
+            )
+            if tags_result.returncode != 0:
+                print("  ⚠ Не удалось обновить релизные теги — версия может показываться прежней.")
+
             # Post-pull syntax guard: validate critical-path files actually
             # parse before declaring the update successful. If a bad commit
             # made it through CI (e.g. admin-merge bypass of a failing
@@ -4847,8 +4886,22 @@ def _cmd_update_impl(args, gateway_mode: bool):
         # regardless of how we die.
         if gateway_mode:
             _exit_code_path = get_hermes_home() / ".update_exit_code"
+            # Код исхода отражает то, что произошло, а не факт «дошли сюда».
+            #
+            # Раньше здесь безусловно писался ноль, и клиент после провала
+            # установки Node-зависимостей видел ДВА противоречащих
+            # сообщения подряд: английское «⚠ Update partially complete —
+            # Node.js dependencies … did not refresh» в блоке кода, а
+            # следом зелёную галочку «Обновление завершено».
+            #
+            # Пишем 2 (частичный успех), а не 1: обновление НЕ провалилось —
+            # код и Python-зависимости обновлены и работоспособны, не
+            # обновились только Node-зависимости. Единица заставила бы шлюз
+            # объявить полный отказ там, где продукт исправен, и это было бы
+            # такой же неправдой, только с другой стороны.
+            _marker = "2" if node_failures else "0"
             try:
-                _exit_code_path.write_text("0", encoding="utf-8")
+                _exit_code_path.write_text(_marker, encoding="utf-8")
             except OSError:
                 pass
 

@@ -58,20 +58,79 @@ class BrowserPreflightResult:
         return {"check": "chromium", "ok": self.ok, "message": self.message, "details": {}}
 
 
-def check_chromium_backend() -> BrowserPreflightResult:
-    """Report whether the browser_* tools will be visible in the schema.
+def _selected_browser_backend() -> str:
+    """Какой браузерный движок выбран КЛИЕНТОМ, а не предполагается нами.
 
-    Delegates entirely to :func:`tools.browser_tool.check_browser_requirements`
-    — the exact ``check_fn`` used at tool-schema assembly time — so this
-    check can never disagree with what the agent actually gets. A local
-    import keeps ``tools.browser_tool`` (a large module with browser-CDP
-    machinery) out of anything that imports this module for reasons other
-    than running the installer's preflight report.
+    Возвращает ``"camofox"``, если включён Camofox (он включается
+    переменной ``CAMOFOX_URL``, а не полем конфига — см.
+    ``tools/browser_camofox.py::is_camofox_mode``), иначе значение
+    ``browser.backend`` из конфига, иначе ``"off"``.
+
+    Никогда не бросает: у проверки перед запуском нет права уронить
+    установку или проход поддержки из-за нечитаемого конфига.
+    """
+    try:
+        from tools.browser_camofox import is_camofox_mode
+
+        if is_camofox_mode():
+            return "camofox"
+    except Exception:
+        pass
+    try:
+        from hermes_cli.config import load_config
+
+        backend = ((load_config() or {}).get("browser") or {}).get("backend")
+        return (backend or "off").strip() or "off"
+    except Exception:
+        return "off"
+
+
+def check_chromium_backend() -> BrowserPreflightResult:
+    """Report whether the browser tools the CLIENT chose will actually work.
+
+    **Проверка обязана смотреть на выбор клиента, а не на один
+    предполагаемый режим.** Раньше она безусловно спрашивала про локальный
+    Chromium, потому что клиентский шаблон конфига фиксирует
+    ``browser.backend: "off"``. Но мастер настройки позволяет выбрать и
+    другое, и тогда вердикт получался неверным в ОБЕ стороны — проверено
+    исполнением на живых машинах 2026-09-04:
+
+    - клиент выбрал **Browser Use** — проверка всё равно требовала
+      Chromium, не находила его и объявляла неполадку. Проход поддержки
+      превращал это в «часть неполадок исправить самостоятельно не
+      удалось… напишите в поддержку» после успешной настройки. Тот же
+      класс, что и советы npm, только источник другой;
+    - клиент выбрал **Camofox** — проверка находила локальный Chromium,
+      рапортовала «всё хорошо» и этим МАСКИРОВАЛА то, что Camofox на
+      машине не установлен и его сервер никто не поднял. То есть в самом
+      неприятном случае она успокаивала вместо того, чтобы предупредить.
+
+    Теперь ветвление идёт по фактическому выбору. Для режимов, где
+    локальный Chromium не при чём, проверка честно говорит «не
+    применимо», а не выдумывает вердикт.
 
     Returns:
         A :class:`BrowserPreflightResult` with ``ok`` mirroring the real
         check_fn's verdict and a Russian, administrator-facing message.
     """
+    backend = _selected_browser_backend()
+
+    if backend == "camofox":
+        return _check_camofox_backend()
+
+    if backend not in ("", "off"):
+        # Облачные и CLI-движки (browser-use, browserbase, firecrawl, ...)
+        # к локальному Chromium отношения не имеют. Молчать «ok» с пустым
+        # сообщением нельзя — читающий отчёт должен видеть, ПОЧЕМУ про
+        # Chromium ничего не сказано.
+        return BrowserPreflightResult(
+            ok=True,
+            message=(
+                f"Локальный Chromium не проверялся: выбран другой браузерный "
+                f"движок (browser.backend: \"{backend}\"). Для него Chromium не нужен."
+            ),
+        )
+
     from tools.browser_tool import check_browser_requirements
 
     if check_browser_requirements():
@@ -90,5 +149,49 @@ def check_chromium_backend() -> BrowserPreflightResult:
             "browser_*, без единого сообщения об ошибке. Установите вручную: "
             "npx agent-browser install --with-deps (или npx playwright "
             "install --with-deps chromium)."
+        ),
+    )
+
+
+def _check_camofox_backend() -> BrowserPreflightResult:
+    """Camofox работает только с ЗАПУЩЕННЫМ сервером — это и проверяем.
+
+    Установка npm-пакета сервер не поднимает (её post_setup печатает
+    инструкцию запустить его отдельно), поэтому «пакет установлен» ничего
+    не обещает. Единственный честный признак — отвечает ли сервер по
+    адресу, который клиент указал в ``CAMOFOX_URL``.
+
+    Делегируем в ``tools.browser_camofox.check_camofox_available`` — тот
+    же принцип, по которому Chromium-ветка делегирует в настоящий
+    ``check_fn`` схемы: проверка не должна расходиться с тем, чем
+    пользуется сам продукт.
+
+    Проверено на живой машине 2026-09-04: после выбора Camofox в мастере
+    npm-пакета на диске не оказалось, порт 9377 никто не слушал, а
+    прежняя проверка рапортовала «локальный Chromium найден и готов к
+    работе» — то есть успокаивала ровно там, где надо было предупредить.
+    """
+    from tools.browser_camofox import check_camofox_available, get_camofox_url
+
+    url = get_camofox_url()
+    if not url:
+        return BrowserPreflightResult(
+            ok=False,
+            message="Выбран Camofox, но адрес его сервера (CAMOFOX_URL) пуст.",
+        )
+
+    if check_camofox_available():
+        return BrowserPreflightResult(
+            ok=True,
+            message=f"Camofox отвечает по адресу {url} — браузерные инструменты готовы.",
+        )
+
+    return BrowserPreflightResult(
+        ok=False,
+        message=(
+            f"Выбран Camofox, но его сервер по адресу {url} не отвечает. "
+            "Браузерные инструменты в этом режиме работать не будут: установка "
+            "пакета сервер не поднимает, его нужно запустить отдельно "
+            "(npx @askjo/camofox-browser или контейнер)."
         ),
     )

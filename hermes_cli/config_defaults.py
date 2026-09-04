@@ -412,8 +412,17 @@ DEFAULT_CONFIG = {
 
     "web": {
         "backend": "",           # shared fallback — applies to both search and extract
-        "search_backend": "",    # per-capability override for web_search (e.g. "searxng")
-        "extract_backend": "",   # per-capability override for web_extract (e.g. "native")
+        # per-capability override for web_search. A string picks one provider
+        # (unchanged, historical behavior). A LIST, e.g.
+        # ["searxng", "tavily", "ddgs"], is a fallback chain: web_search tries
+        # each name in order and returns the first one that answers with a
+        # non-empty result, so a single dead/misconfigured search backend no
+        # longer takes the whole tool down (tools/web_tools.py::
+        # _run_search_backend_chain). Default "" keeps existing configs
+        # exactly as they were — the type, not the presence of the key, picks
+        # the code path.
+        "search_backend": "",
+        "extract_backend": "",   # per-capability override for web_extract (e.g. "native") — string only, no fallback chain
         "extract_char_limit": 15000,  # per-page char budget for web_extract; larger pages truncate + store full text in cache/web
     },
 

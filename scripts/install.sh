@@ -692,8 +692,8 @@ attempt_install_git() {
             case "$DISTRO" in
                 ubuntu|debian)
                     log_info "Installing Git via apt..."
-                    $sudo_cmd env DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=600 update -qq >/dev/null 2>&1 || true
-                    $sudo_cmd env DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=600 install -y -qq git >/dev/null 2>&1 || true
+                    $sudo_cmd env DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=1800 update -qq >/dev/null 2>&1 || true
+                    $sudo_cmd env DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=1800 install -y -qq git >/dev/null 2>&1 || true
                     ;;
                 fedora)
                     log_info "Installing Git via dnf..."
@@ -1111,13 +1111,16 @@ install_system_packages() {
     local pkg_install=""
     case "$DISTRO" in
         # -o DPkg::Lock::Timeout: ждать освобождения замка dpkg, а не
-        # отказывать сразу. На свежей машине apt почти наверняка занят
+        # отказывать сразу. Значение согласовано с тем, что рецепт
+        # cloud-init кладёт в /etc/apt/apt.conf.d: флаг командной строки
+        # ПЕРЕБИВАЕТ файл конфигурации, поэтому меньшее значение здесь
+        # молча урезало бы ожидание на клиентской машине до своего. На свежей машине apt почти наверняка занят
         # своими же службами (apt-daily, unattended-upgrades), и без
         # ожидания установка ripgrep/ffmpeg проваливается по причине, не
         # имеющей к ней никакого отношения. `apt` (в отличие от
         # `apt-get`) имеет собственное умолчание в 120 секунд -- этого
         # мало: разблокировка после unattended-upgrades занимает минуты.
-        ubuntu|debian) pkg_install="apt -o DPkg::Lock::Timeout=600 install -y"   ;;
+        ubuntu|debian) pkg_install="apt -o DPkg::Lock::Timeout=1800 install -y"   ;;
         fedora)        pkg_install="dnf install -y"   ;;
         arch)          pkg_install="pacman -S --noconfirm" ;;
     esac
@@ -1646,13 +1649,13 @@ install_deps() {
             log_info "Some build tools may be needed for Python packages..."
             if command -v sudo &> /dev/null; then
                 if sudo -n true 2>/dev/null; then
-                    sudo DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get -o DPkg::Lock::Timeout=600 update -qq && sudo DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get -o DPkg::Lock::Timeout=600 install -y -qq build-essential python3-dev libffi-dev >/dev/null 2>&1 || true
+                    sudo DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get -o DPkg::Lock::Timeout=1800 update -qq && sudo DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get -o DPkg::Lock::Timeout=1800 install -y -qq build-essential python3-dev libffi-dev >/dev/null 2>&1 || true
                     log_success "Build tools installed"
                 else
                     log_info "sudo is needed ONLY to install build tools (build-essential, python3-dev, libffi-dev) via apt."
                     log_info "Trix Agent itself does not require or retain root access."
                     if prompt_yes_no "Install build tools?" "yes"; then
-                        sudo DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get -o DPkg::Lock::Timeout=600 update -qq && sudo DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get -o DPkg::Lock::Timeout=600 install -y -qq build-essential python3-dev libffi-dev >/dev/null 2>&1 || true
+                        sudo DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get -o DPkg::Lock::Timeout=1800 update -qq && sudo DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get -o DPkg::Lock::Timeout=1800 install -y -qq build-essential python3-dev libffi-dev >/dev/null 2>&1 || true
                         log_success "Build tools installed"
                     fi
                 fi
@@ -2719,15 +2722,40 @@ install_browser_use_cli() {
         log_info "Skipping Browser Use CLI install (uv unavailable)"
         return 0
     fi
+    # `-x` на симлинке проверяет ЦЕЛЬ, а не саму ссылку, и от имени того,
+    # кто спрашивает. Для root ответ был «да» даже когда цель лежала в
+    # /root и агенту была недоступна — см. UV_TOOL_DIR ниже.
     if command -v browser-use >/dev/null 2>&1 || [ -x "$HERMES_HOME/bin/browser-use" ]; then
         log_success "Browser Use CLI already installed"
         return 0
     fi
 
     log_info "Installing Browser Use CLI (default browser backend)..."
-    # UV_TOOL_BIN_DIR keeps the binary inside Hermes' managed bin dir, where
-    # the browser tool resolves it — no reliance on the user's PATH.
-    if run_with_timeout 600 env UV_NO_CONFIG=1 UV_TOOL_BIN_DIR="$HERMES_HOME/bin" \
+    # ДВА каталога, и одного мало.
+    #
+    # UV_TOOL_BIN_DIR кладёт в управляемый Hermes каталог только СИМЛИНКИ;
+    # сам инструмент uv ставит в UV_TOOL_DIR, а его умолчание — домашний
+    # каталог того, кто запускает. Установщик работает от root, поэтому
+    # ссылки в /home/user/.hermes/bin указывали в
+    # /root/.local/share/uv/tools/..., а /root имеет права 0700.
+    #
+    # Замерено на клиентской машине 2026-09-04: от `user` (а под ним и
+    # работает шлюз) `browser-use --version` отвечает «Permission denied»,
+    # os.access(..., X_OK) даёт False. Спасал только запасной путь через
+    # `uvx`, то есть медленная загрузка при каждом вызове вместо
+    # установленного инструмента — и молча: клиент видел бы просто, что
+    # браузер «думает» дольше.
+    #
+    # Это ТРЕТИЙ экземпляр одного класса: до него так же уезжали в /root
+    # Chromium от playwright (закрыт PLAYWRIGHT_BROWSERS_PATH) и браузер
+    # от agent-browser (закрыт запуском от владельца HERMES_HOME). Общее
+    # правило, которое стоит применять к любому новому шагу здесь: **если
+    # шаг что-то КУДА-ТО кладёт, спроси, куда именно, а не только под кем
+    # он выполняется** — переменная «куда положить бинарь» и переменная
+    # «куда положить ссылку» бывают разными.
+    if run_with_timeout 600 env UV_NO_CONFIG=1 \
+        UV_TOOL_BIN_DIR="$HERMES_HOME/bin" \
+        UV_TOOL_DIR="$HERMES_HOME/uv-tools" \
         "$UV_CMD" tool install browser-use >/dev/null 2>&1; then
         log_success "Browser Use CLI installed"
     else

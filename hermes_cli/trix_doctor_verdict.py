@@ -69,15 +69,42 @@ class DoctorRunResult:
     fixable; `manual_issues` need a human. Both are already
     human-readable strings — `run_doctor()` built them for its own
     printed report, and that same text is what a verdict consumer sees.
+
+    ``advisories`` is a third bucket, and the reason it exists is a defect
+    a client hit on a live machine 2026-09-04. It carries findings that are
+    **true, but not this machine's to answer** — today, `npm audit`
+    advisories in build-time tooling. They come from packages we ship, so
+    they are byte-identical on every client VM; `doctor --fix` does not run
+    `npm audit fix` at all, and for the workspace-scoped ones this file
+    itself refuses to even print a manual command (npm's arborist crashes
+    on that tree). Nothing on the client's machine can clear them, ever.
+
+    While they sat in ``issues``, they made ``ok`` False on every healthy
+    machine — and ``ok`` is what the support pass turns into the ONE
+    sentence a client reads. Every client finished a perfectly successful
+    setup and was told «часть неполадок исправить самостоятельно не
+    удалось… напишите в поддержку», over three lines about esbuild.
+
+    So the rule this bucket encodes: **``issues``/``manual_issues`` are for
+    things this machine can act on; ``advisories`` are for things we can.**
+    They are still printed in full by ``run_doctor()`` and still carried in
+    ``verdict_json()`` — nothing is hidden from us. Our own supply-chain
+    posture is covered where it belongs: `hermes security` (OSV), the
+    dependency-pinning policy in CLAUDE.md, and CI.
     """
 
     issues: list = field(default_factory=list)
     manual_issues: list = field(default_factory=list)
     fixed_count: int = 0
+    advisories: list = field(default_factory=list)
 
     @property
     def remaining_issues(self) -> list:
-        """Everything still outstanding after this run, auto-fixable or not."""
+        """Everything still outstanding after this run, auto-fixable or not.
+
+        Deliberately excludes ``advisories`` — see the field's own note in
+        ``run_doctor()`` and the docstring below.
+        """
         return [*self.issues, *self.manual_issues]
 
     @property
@@ -97,6 +124,8 @@ def verdict_json(result: DoctorRunResult) -> str:
         "ok": result.ok,
         "fixed_count": result.fixed_count,
         "remaining_issues": result.remaining_issues,
+        # Reported, never counted — see DoctorRunResult.advisories.
+        "advisories": result.advisories,
     }
     return json.dumps(payload, ensure_ascii=False, indent=2)
 

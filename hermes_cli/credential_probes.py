@@ -33,7 +33,13 @@ CREDENTIAL_PROBES: dict[str, tuple[str, str]] = {
 }
 
 
-def probe_provider_key(env_var: str, value: str, timeout: float = 10.0, proxy: str | None = None) -> dict:
+def probe_provider_key(
+    env_var: str,
+    value: str,
+    timeout: float = 10.0,
+    proxy: str | None = None,
+    base_url: str | None = None,
+) -> dict:
     """Sync probe: {ok, reachable, message, reason, status_code}. Unknown
     provider → ok (don't block). See the module docstring for ``reason``.
 
@@ -43,9 +49,20 @@ def probe_provider_key(env_var: str, value: str, timeout: float = 10.0, proxy: s
     provider's own API is only reachable through it.
     """
     probe = CREDENTIAL_PROBES.get(env_var)
-    if not probe:
-        return {"ok": True, "reachable": False, "message": "", "reason": None, "status_code": None}
-    url, auth = probe
+    derived = False
+    if probe:
+        url, auth = probe
+    else:
+        # Нет курированной записи — выводим адрес из каталога/введённого
+        # клиентом base_url. См. trix_derived_probes: такая проверка
+        # имеет право не пустить клиента только при явном отказе в ключе.
+        from hermes_cli.trix_derived_probes import derived_probe_url
+
+        url = derived_probe_url(env_var, base_url)
+        if not url:
+            return {"ok": True, "reachable": False, "message": "", "reason": None, "status_code": None}
+        auth = "bearer"
+        derived = True
     headers = {"Accept": "application/json"}
     params = {}
     if auth == "bearer":
@@ -59,6 +76,10 @@ def probe_provider_key(env_var: str, value: str, timeout: float = 10.0, proxy: s
         with httpx.Client(**kwargs) as client:
             resp = client.get(url, headers=headers, params=params)
     except Exception:
+        if derived:
+            # Адрес мы угадывали — молчание провайдера ничего не говорит
+            # о ключе. Читается как «проверить не удалось», не как отказ.
+            return {"ok": True, "reachable": False, "message": "", "reason": None, "status_code": None}
         return {"ok": False, "reachable": False,
                 "message": "Не удалось связаться с провайдером для проверки ключа.",
                 "reason": "network", "status_code": None}
@@ -72,6 +93,10 @@ def probe_provider_key(env_var: str, value: str, timeout: float = 10.0, proxy: s
                 "reason": "billing", "status_code": resp.status_code}
     if resp.status_code == 429 or resp.is_success:
         return {"ok": True, "reachable": True, "message": "", "reason": None, "status_code": resp.status_code}
+    if derived:
+        # Не 401/402/403 на угаданном адресе — скорее всего у провайдера
+        # просто нет `/models`. Про ключ это не говорит ничего.
+        return {"ok": True, "reachable": False, "message": "", "reason": None, "status_code": resp.status_code}
     return {"ok": False, "reachable": True,
             "message": f"Провайдер ответил HTTP {resp.status_code} на этот ключ.",
             "reason": "other", "status_code": resp.status_code}

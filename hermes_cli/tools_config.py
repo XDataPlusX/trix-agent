@@ -1644,6 +1644,39 @@ def _run_cua_driver_installer(
 
 def _run_post_setup(post_setup_key: str):
     """Run post-setup hooks for tools that need extra installation steps."""
+    try:
+        return _run_post_setup_impl(post_setup_key)
+    finally:
+        # numpy восстанавливаем ПОСЛЕ любого шага, а не один раз при
+        # создании машины.
+        #
+        # На процессоре ниже x86-64-v2 (дефолт нашего хостера) колёса
+        # numpy 2.x не импортируются вовсе, и рецепт при создании машины
+        # ставит работающую ветку 1.x. Но любой ПОЗДНИЙ шаг, тянущий
+        # пакет с зависимостью от numpy, возвращает 2.x обратно — и молча
+        # ломает всё, что за numpy стоит: распознавание речи и локальные
+        # голоса.
+        #
+        # Снято на живой машине 2026-09-05: клиент выбрал KittenTTS —
+        # заработало; следом выбрал Piper — установка Piper подтянула
+        # numpy 2.x, и озвучка отвалилась с той же ошибкой baseline.
+        # Разовой починки здесь не хватает по построению, нужна
+        # восстанавливающаяся.
+        #
+        # На нормальном процессоре это стоит одного импорта numpy и
+        # ничего не делает.
+        try:
+            from hermes_cli.trix_numpy_guard import ensure_runnable_numpy
+
+            guard = ensure_runnable_numpy()
+            if guard.repaired:
+                _print_warning(f"    {guard.message}")
+        except Exception:
+            pass
+
+
+def _run_post_setup_impl(post_setup_key: str):
+    """Тело установочных хуков. Обёртка выше восстанавливает numpy."""
     import shutil
     from hermes_constants import find_node_executable
 
@@ -1800,22 +1833,64 @@ def _run_post_setup(post_setup_key: str):
         elif _npm_bin:
             _print_info("    Installing Camofox browser server...")
             import subprocess
-            # Absolute npm path so .cmd shim executes on Windows.
+            # ИМЯ ПАКЕТА обязательно. Раньше здесь стоял голый
+            # `npm install --workspaces=false`, то есть «поставь
+            # объявленные зависимости репозитория» — а
+            # `@askjo/camofox-browser` в `package.json` не объявлен и
+            # никогда не был. Команда честно возвращала ноль, хук печатал
+            # «Camofox installed», и Camofox не появлялся.
+            #
+            # Это худший вид отказа: `tool_install_failures` пуст, мастер
+            # рапортует успех, клиент выбирает Camofox и получает браузер,
+            # которого нет. Снято с клиентской машины 2026-09-04 —
+            # установочный хук отработал, `node_modules/@askjo` не
+            # появился.
+            #
+            # Версия та же, что у `ensure_browser` в scripts/install.sh:
+            # один пакет — один пин, иначе два пути установки разъедутся.
             result = subprocess.run(
                 # --workspaces=false avoids resolving apps/desktop. See #38772.
-                [_npm_bin, "install", "--silent", "--workspaces=false"],
+                [_npm_bin, "install", "--silent", "--workspaces=false",
+                 "@askjo/camofox-browser@^1.5.2"],
                 capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=str(PROJECT_ROOT),
                 creationflags=_post_setup_no_window_flags(),
             )
-            if result.returncode == 0:
+            # Проверяем ФАКТ, а не код возврата. Прежний код доверял коду
+            # возврата команды, которая не могла провалиться, и потому
+            # рапортовал успех всегда. Тот же урок, что с пакетами apt в
+            # рецепте: спрашивать надо у диска, а не у команды.
+            if result.returncode == 0 and camofox_dir.exists():
                 _print_success("    Camofox installed")
             else:
-                _print_warning("    npm install failed - run manually: npm install --workspaces=false")
+                detail = (result.stderr or result.stdout or "").strip().splitlines()
+                if detail:
+                    _print_warning(f"    npm: {detail[-1][:160]}")
+                _print_warning("    Не удалось поставить Camofox — запустите вручную:")
+                _print_warning("    npm install --workspaces=false @askjo/camofox-browser")
         if camofox_dir.exists():
-            _print_info("    Start the Camofox server:")
-            _print_info("      npx @askjo/camofox-browser")
-            _print_info("    First run downloads the Camoufox engine (~300MB)")
-            _print_info("    Or use Docker: docker run -p 9377:9377 -e CAMOFOX_PORT=9377 jo-inc/camofox-browser")
+            # Раньше здесь печаталась инструкция «запустите
+            # npx @askjo/camofox-browser». Она адресована человеку с
+            # консолью, а у клиента её нет по устройству продукта: ни SSH,
+            # ни терминала, единственная дверь — мастер настройки. Проверено
+            # на клиентской машине 2026-09-04: после выбора Camofox порт
+            # 9377 не слушал никто, и браузерные инструменты в этом режиме
+            # были обречены на сетевую ошибку при первом же вызове. То есть
+            # вариант, предлагаемый мастером наравне с остальными, довести
+            # до рабочего состояния было нельзя в принципе.
+            #
+            # Служба ставится ровно так же, как уже живущие на этой машине
+            # шлюз и мастер: systemd --user + linger. Логика — в нашем
+            # модуле, здесь один вызов: `tools_config.py` регулярно
+            # тянется сверху.
+            from hermes_cli.trix_camofox_service import ensure_camofox_service
+
+            camofox_result = ensure_camofox_service(PROJECT_ROOT)
+            if camofox_result.ok:
+                _print_success(f"    {camofox_result.message}")
+            else:
+                _print_warning(f"    {camofox_result.message}")
+                _print_info("    Запустить вручную: npx @askjo/camofox-browser")
+                _print_info("    Или контейнером: docker run -p 9377:9377 -e CAMOFOX_PORT=9377 jo-inc/camofox-browser")
         elif not _npm_bin:
             _print_warning("    Node.js not found. Install Camofox via Docker:")
             _print_info("      docker run -p 9377:9377 -e CAMOFOX_PORT=9377 jo-inc/camofox-browser")
@@ -3314,6 +3389,50 @@ def _camofox_installed() -> bool:
     return (PROJECT_ROOT / "node_modules" / "@askjo" / "camofox-browser").exists()
 
 
+def _browser_use_cli_installed() -> bool:
+    """True when the browser-use CLI ``_run_post_setup("browser_use_cli")``
+    installs is already on PATH. Mirrors that hook's own first check
+    (``shutil.which("browser-use")`` — see ``_run_post_setup``'s
+    ``"browser_use_cli"`` branch) so the readiness pill only flips to Ready
+    once the binary is actually there, never merely because this row was
+    just selected.
+
+    Was missing from ``_POST_SETUP_READY`` entirely, which sent this row
+    down the ``is_active`` fallback below — and ``_is_provider_active()``
+    treats ``config.browser.backend == "browser-use"`` as "active", a value
+    ``apply_settings()`` had *just* written for this very submission. That
+    made a first-time pick of "Browser Use" read as already-installed and
+    skipped ``uv tool install browser-use`` outright (2026-09-04 field
+    reports on two machines: empty ``tool_install_failures`` but no CLI on
+    disk).
+
+    **Спрашиваем тем же резолвером, каким продукт этот CLI ИЩЕТ**, а не
+    через PATH. Установка кладёт бинарь в ``$HERMES_HOME/bin`` —
+    сознательно, чтобы не зависеть от PATH пользователя, — и ровно поэтому
+    ``shutil.which`` его там не находит: у службы мастера PATH системный
+    (``/usr/local/bin:/usr/bin:...``) и каталога Hermes в нём нет.
+
+    Первая редакция этого предиката спрашивала PATH и получала обратный
+    дефект: хук отрабатывал успешно («already installed»), а проверка
+    после него отвечала «не установлено», и мастер показывал клиенту
+    «Установка не удалась» на успешно установленном инструменте. Снято с
+    живой машины 2026-09-04: `shutil.which` -> None, `_find_cli()` ->
+    ['/home/user/.hermes/bin/browser-use'].
+
+    Правило, которое отсюда следует: **проверять наличие надо тем же
+    способом, каким продукт этой вещью пользуется.** Иначе проверка и
+    рантайм расходятся, и расходятся молча.
+    """
+    if shutil.which("browser-use"):
+        return True
+    try:
+        from tools.browser_use_cli import _find_cli
+
+        return bool(_find_cli())
+    except Exception:
+        return False
+
+
 # post_setup_key -> predicate(): True when the install side-effect is already
 # satisfied. Used by ``provider_readiness_status`` to decide whether a keyless
 # post_setup row (KittenTTS, Piper, Local Browser, …) is honestly "ready" or
@@ -3329,6 +3448,7 @@ _POST_SETUP_READY: dict = {
     "agent_browser": lambda: _agent_browser_installed(),
     "browserbase": lambda: _cloud_agent_browser_installed(),
     "camofox": lambda: _camofox_installed(),
+    "browser_use_cli": lambda: _browser_use_cli_installed(),
     "cua_driver": lambda: _resolved_cua_driver_cmd() is not None,
 }
 
@@ -3373,9 +3493,20 @@ def provider_readiness_status(
     """
     env_vars = provider.get("env_vars", [])
     if env_vars:
-        if all(get_env_value(e["key"]) for e in env_vars):
-            return "ready"
-        return "needs_keys"
+        if not all(get_env_value(e["key"]) for e in env_vars):
+            return "needs_keys"
+        # Keys present ≠ installed. Don't return "ready" here — a row can
+        # carry BOTH env vars and a post_setup install hook (Camofox:
+        # CAMOFOX_URL + the npm package; Langfuse: the API keys + the
+        # `langfuse` pip module). Returning early let a config write alone
+        # (apply_settings() saving CAMOFOX_URL for THIS submission) read as
+        # "already installed" before the hook ever ran, so
+        # _pending_tool_installs() filtered the row out and the install
+        # step silently never fired (2026-09-04 field report: Camofox
+        # selected, config saved, but node_modules/@askjo/camofox-browser
+        # never appears). Fall through to the post_setup check below —
+        # it's the honest ground truth for "installed"; keyless rows with
+        # no post_setup still fall out to the "ready" at the bottom.
 
     managed_feature = provider.get("managed_nous_feature")
     if provider.get("requires_nous_auth") or managed_feature:

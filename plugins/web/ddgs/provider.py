@@ -59,8 +59,37 @@ def _run_ddgs_search(query: str, safe_limit: int) -> list[dict[str, Any]]:
     """
     from ddgs import DDGS  # type: ignore
 
+    # Прокси приходится передавать РУКАМИ, потому что ddgs его сам не
+    # возьмёт: под ним лежит primp (Rust), и переменные `HTTPS_PROXY` /
+    # `ALL_PROXY` он игнорирует. Проверено запуском, а не по документации:
+    # `HTTPS_PROXY=http://127.0.0.1:1 primp.Client().get(...)` возвращает
+    # 200 при заведомо мёртвом прокси. Сам ddgs читает только собственную
+    # `DDGS_PROXY`, которую наш продукт нигде не пишет.
+    #
+    # Цена этого для клиента конкретная: ddgs — рекомендованный по
+    # умолчанию бесплатный поиск, и он ходил на duckduckgo.com напрямую с
+    # российского IP, мимо прокси, за который клиент заплатил. Если DDG
+    # режет диапазон, поиск мёртв, а единственный инструмент, способный
+    # это починить, к нему не подключён.
+    #
+    # Берём тот же резолвер, что и остальной исходящий трафик продукта,
+    # — он уважает `NO_PROXY`, и локальные адреса мимо прокси не уедут.
+    # Чиним в провайдере, а не записью `DDGS_PROXY` в мастере: так это
+    # работает и у тех, кто задал прокси переменной окружения руками.
+    proxy = None
+    try:
+        from agent.process_bootstrap import _get_proxy_for_base_url
+
+        proxy = _get_proxy_for_base_url("https://duckduckgo.com")
+    except Exception:  # noqa: BLE001 — поиск важнее прокси
+        proxy = None
+
+    ddgs_kwargs: dict[str, Any] = {"timeout": 10}
+    if proxy:
+        ddgs_kwargs["proxy"] = proxy
+
     results: list[dict[str, Any]] = []
-    with DDGS(timeout=10) as client:
+    with DDGS(**ddgs_kwargs) as client:
         for i, hit in enumerate(client.text(query, max_results=safe_limit)):
             if i >= safe_limit:
                 break

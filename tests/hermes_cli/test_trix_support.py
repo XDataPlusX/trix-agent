@@ -342,7 +342,7 @@ def _mocked_pass_boundaries(monkeypatch):
             "hermes_cli.browser_preflight.check_chromium_backend",
         ) as browser,
         patch(
-            "hermes_cli.search_preflight.check_ddgs_backend",
+            "hermes_cli.search_preflight.check_search_backend",
         ) as search,
         patch(
             "hermes_cli.trix_setup_service_check.check_trix_setup_service",
@@ -363,7 +363,7 @@ def _mocked_pass_boundaries(monkeypatch):
     ):
         docker.return_value.to_dict.return_value = {"check": "docker", "ok": True, "message": "", "details": {}}
         browser.return_value.to_dict.return_value = {"check": "chromium", "ok": True, "message": "", "details": {}}
-        search.return_value.to_dict.return_value = {"check": "ddgs", "ok": True, "message": "", "details": {}}
+        search.return_value.to_dict.return_value = {"check": "search", "ok": True, "message": "", "details": {}}
 
         def _wizard_service_ok(issues):
             return None  # stays silent — no issues appended

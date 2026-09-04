@@ -41,6 +41,7 @@ import logging
 import os
 import re
 import asyncio
+import time
 from typing import List, Dict, Any, Optional, TYPE_CHECKING
 import httpx  # noqa: F401 — kept at module top so tests can patch tools.web_tools.httpx
 # After the web-provider plugin migration (PR #25182), the Firecrawl SDK
@@ -295,16 +296,74 @@ def _get_extract_backend() -> str:
     return _get_capability_backend("extract")
 
 
+def _normalize_backend_value(value: Any) -> List[str]:
+    """Coerce a ``web.*_backend`` config value into an ordered name list.
+
+    ``web.search_backend`` (и только он — см. ``_run_search_backend_chain``)
+    теперь принимает и строку (один провайдер, как всегда), и список (цепочка
+    запасных в порядке попыток). Эта функция — единая точка разбора обеих
+    форм, чтобы не плодить дублирующиеся ``isinstance`` проверки по модулю.
+
+    Строка нормализуется ровно как раньше (``.strip().lower()``) — обратная
+    совместимость требует побитового совпадения поведения. Список фильтрует
+    не-строки и пустые элементы, схлопывает повторы с сохранением первого
+    места (иначе один и тот же сломанный провайдер мог бы дважды съесть
+    бюджет времени цепочки). Любой другой тип (None, число, ...) — пустой
+    список, а не исключение: вызывающий код тогда падает на свой обычный
+    fallback вместо AttributeError на ``.lower()`` списка/None.
+    """
+    if isinstance(value, str):
+        v = value.strip().lower()
+        return [v] if v else []
+    if isinstance(value, (list, tuple)):
+        seen: set = set()
+        out: List[str] = []
+        for item in value:
+            if not isinstance(item, str):
+                continue
+            v = item.strip().lower()
+            if v and v not in seen:
+                seen.add(v)
+                out.append(v)
+        return out
+    return []
+
+
 def _get_capability_backend(capability: str) -> str:
     """Shared helper for per-capability backend selection.
 
-    Reads ``web.{capability}_backend`` from config; if set and available,
-    uses it. Otherwise falls through to the shared ``_get_backend()``.
+    Reads ``web.{capability}_backend`` from config. **Явный выбор клиента
+    побеждает, даже когда провайдер сейчас недоступен** — тогда клиент
+    получит точную ошибку про СВОЙ поисковик, а не про чужой.
+
+    Так было обещано с самого начала: ``agent/web_search_registry`` прямо
+    пишет, что явная настройка выигрывает у проверки доступности, «чтобы
+    пользователь получил точную ошибку». Обещание не исполнялось —
+    недоступный явный выбор молча проваливался в ``_get_backend()``, а тот
+    в конце возвращает ``firecrawl``.
+
+    Цена этого для клиента (разбор 2026-09-04): у клиента в конфиге
+    ``search_backend: searxng``, адрес слетел — и вместо «SearXNG не
+    настроен» он читает требование купить ключ Firecrawl, которого он не
+    покупал и о котором не просил. Диагностика подменяется рекламой
+    чужого платного сервиса.
+
+    Автоопределение остаётся ровно для того случая, для которого оно и
+    писалось: клиент НИЧЕГО не выбирал. Тогда угадывать по ключам —
+    единственное, что можно сделать.
+
+    ``web.search_backend`` может быть и списком (fallback-цепочка — см.
+    ``_run_search_backend_chain``). Эта функция — не место, где цепочка
+    выполняется (она возвращает ровно ОДНО имя), но она обязана не упасть,
+    когда её всё равно позовут (``codex.py``, preflight-модули, setup
+    wizard — они хотят «текущий основной бэкенд», а не всю цепочку), поэтому
+    список нормализуется через ``_normalize_backend_value`` и отдаётся
+    первый элемент — тот же провайдер, который цепочка попробует первым.
     """
     cfg = _load_web_config()
-    specific = (cfg.get(f"{capability}_backend") or "").lower().strip()
-    if specific and _is_backend_available(specific):
-        return specific
+    chain = _normalize_backend_value(cfg.get(f"{capability}_backend"))
+    if chain:
+        return chain[0]
     return _get_backend()
 
 
@@ -615,6 +674,171 @@ def _ensure_web_plugins_loaded() -> None:
         logger.warning("Web plugin discovery failed (non-fatal): %s", exc)
 
 
+def _reject_empty_search_success(response: dict, provider_name: str, query: str) -> dict:
+    """Пустая выдача — это НЕ успех.
+
+    Самый опасный исход поиска не «поиск не работает», а «поиск вернул
+    ноль результатов, отрапортовав успех»: модель видит успешный ответ с
+    пустым списком и делает единственный доступный вывод — «в интернете
+    этого нет» — после чего уверенно отвечает клиенту по памяти. Отличить
+    «ничего не нашлось» от «поисковик сломался» она не может: ответ
+    выглядит одинаково.
+
+    А сломанный поисковик отдаёт именно это. SearXNG, у которого
+    апстримные движки заблокированы или отвалились (штатное состояние при
+    блокировках), возвращает HTTP 200 и пустой список; тем же отвечает
+    ddgs, когда его режут по адресу. Ни один из них не считает это
+    ошибкой — с их точки зрения запрос выполнен.
+
+    Решение принимается здесь, в одном месте на всех провайдеров: успех с
+    нулём результатов превращается в честный отказ с названием поисковика
+    внутри. Модель получает возможность сказать «поиск не дал
+    результатов» вместо того, чтобы выдумывать ответ.
+
+    Диагностику провайдера не теряем: если он приложил список не
+    ответивших движков (SearXNG умеет), он попадает в текст — это ровно
+    то, по чему поломку можно опознать, и раньше оно выбрасывалось.
+    """
+    if not isinstance(response, dict) or not response.get("success"):
+        return response
+    data = response.get("data") or {}
+    if data.get("web"):
+        return response
+
+    detail = ""
+    unresponsive = data.get("unresponsive_engines")
+    if unresponsive:
+        try:
+            names = ", ".join(
+                str(item[0] if isinstance(item, (list, tuple)) else item)
+                for item in unresponsive
+            )
+        except Exception:
+            names = str(unresponsive)
+        if names:
+            detail = f" Не ответили движки: {names}."
+
+    return {
+        "success": False,
+        "error": (
+            f"Поисковик '{provider_name}' ответил, но не вернул ни одного "
+            f"результата по запросу «{query}»." + detail +
+            " Это может значить и что ничего не нашлось, и что поиск сломан "
+            "— отличить нельзя, поэтому результат не выдаётся за успешный."
+        ),
+        "data": {"web": []},
+    }
+
+
+# Общий бюджет времени (секунды) на всю цепочку web.search_backend, когда
+# он настроен как список. Это НЕ таймаут одного провайдера — у каждого свой
+# внутренний (15с у searxng/brave-free, 30с у ddgs, 60с у tavily) — а потолок
+# на то, сколько секунд агент вообще готов провести внутри одного вызова
+# web_search, перебирая запасных. Проверяется только перед СТАРТОМ очередной
+# попытки: уже идущий синхронный HTTP-вызов мы не прерываем (отменить
+# синхронный provider.search() нечем — это не asyncio.wait_for), поэтому
+# бюджет не даёт железной верхней границы на весь вызов, зато не даёт цепочке
+# из нескольких сломанных провайдеров линейно суммировать их таймауты один
+# за другим на один и тот же вызов web_search.
+#
+# Почему 20 секунд: пользователь в живом чате уже воспринимает любой
+# web_search как заметную паузу, а типичная поломка первого провайдера — это
+# либо мгновенная ошибка (нет сети, 401, неверный конфиг), либо упор в его
+# собственный таймаут (чаще всего 15с). 20с хватает пережить один быстро
+# сломанный бэкенд и дождаться ответа второго за разумное время, но
+# останавливает цепочку раньше, чем она успеет пройти третий-четвёртый
+# медленный таймаут подряд — именно тот сценарий, из-за которого чинится
+# эта функция («сегодня Bing работает, завтра нет», а поиск не должен
+# превращаться в минуту тишины).
+SEARCH_FALLBACK_CHAIN_BUDGET_SECS = 20.0
+
+
+def _describe_search_attempt_failure(response: Any) -> str:
+    """Короткое (для текста итогового отказа) описание неудачной попытки."""
+    if isinstance(response, dict):
+        err = response.get("error")
+        if err:
+            text = str(err)
+            return text if len(text) <= 200 else text[:200] + "…"
+    return "пустой или неожиданный ответ"
+
+
+def _run_search_backend_chain(chain: List[str], query: str, limit: int) -> dict:
+    """Пройти ``web.search_backend`` (список) по порядку, вернуть первый успех.
+
+    Каждое имя в цепочке — кандидат, не гарантия: незарегистрированный, не
+    умеющий искать или недоступный (нет ключа/настройки) провайдер
+    пропускается БЕЗ вызова ``search()`` — в отличие от одиночной строки в
+    ``web.search_backend`` (см. докстринг ``_get_capability_backend``), где
+    явный единственный выбор клиента всегда вызывается напрямую ради точной
+    ошибки. Здесь клиент сам попросил цепочку из нескольких имён — молчаливый
+    переход к следующему кандидату и есть запрошенное поведение, а не
+    подмена его выбора.
+
+    Пустая выдача при ``success: true`` уже неотличима от ошибки
+    (``_reject_empty_search_success``), поэтому оба исхода одинаково ведут
+    к следующему провайдеру в цепочке — именно это самый частый вид
+    поломки (SearXNG/ddgs отвечают 200 и пустым списком, когда сломаны).
+
+    Успешный ответ от НЕ первого провайдера помечается ``data.answered_by``
+    именем реально ответившего — клиенту и модели важно видеть, что
+    сработал не основной выбор.
+    """
+    from agent.web_search_registry import get_provider as _wsp_get_provider
+
+    attempts: List[str] = []
+    deadline = time.monotonic() + SEARCH_FALLBACK_CHAIN_BUDGET_SECS
+
+    for i, name in enumerate(chain):
+        if i > 0 and time.monotonic() >= deadline:
+            skipped = ", ".join(chain[i:])
+            attempts.append(
+                f"{skipped}: пропущены — бюджет времени цепочки "
+                f"({SEARCH_FALLBACK_CHAIN_BUDGET_SECS:.0f}с) исчерпан"
+            )
+            break
+
+        provider = _wsp_get_provider(name)
+        if provider is None:
+            attempts.append(f"{name}: не зарегистрирован")
+            continue
+        if not provider.supports_search():
+            attempts.append(f"{name}: не поддерживает поиск")
+            continue
+        if not _is_backend_available(name):
+            attempts.append(f"{name}: недоступен (нет ключа/настройки)")
+            continue
+
+        logger.info(
+            "Web search via %s (%d/%d in fallback chain): '%s' (limit: %d)",
+            name, i + 1, len(chain), query, limit,
+        )
+        try:
+            response = provider.search(query, limit)
+        except Exception as exc:  # noqa: BLE001 — одна сломанная попытка не должна убить всю цепочку
+            attempts.append(f"{name}: исключение — {exc}")
+            continue
+
+        response = _reject_empty_search_success(response, provider.name, query)
+        if isinstance(response, dict) and response.get("success"):
+            if i > 0:
+                data = response.get("data")
+                if isinstance(data, dict):
+                    data["answered_by"] = provider.name
+            return response
+
+        attempts.append(f"{name}: {_describe_search_attempt_failure(response)}")
+
+    tried = "; ".join(attempts) if attempts else "цепочка web.search_backend пуста"
+    return {
+        "success": False,
+        "error": (
+            f"Ни один поисковик из цепочки web.search_backend не вернул "
+            f"результат по запросу «{query}». Пробовали по порядку: {tried}."
+        ),
+    }
+
+
 def web_search_tool(query: str, limit: int = 5) -> str:
     """
     Search the web for information using available search API backend.
@@ -676,50 +900,72 @@ def web_search_tool(query: str, limit: int = 5) -> str:
         # now live as plugins; the dispatcher is just a registry lookup +
         # delegation. Sync only — every provider's search() is sync.
         _ensure_web_plugins_loaded()
-        from agent.web_search_registry import (
-            get_active_search_provider,
-            get_provider as _wsp_get_provider,
-            _disabled_web_plugin_for,
+
+        # web.search_backend as a LIST means the client opted into a
+        # fallback chain — route through _run_search_backend_chain(), which
+        # walks the whole list with its own time budget and per-entry
+        # availability gating. Anything else (a plain string, unset, or a
+        # malformed value) keeps the exact historical single-backend path
+        # below untouched, so every pre-existing caller/test keeps working
+        # bit-for-bit.
+        cfg = _load_web_config()
+        raw_search_backend = cfg.get("search_backend")
+        fallback_chain = (
+            _normalize_backend_value(raw_search_backend)
+            if isinstance(raw_search_backend, (list, tuple))
+            else []
         )
 
-        backend = _get_search_backend()
-        provider = _wsp_get_provider(backend) if backend else None
-        if provider is None or not provider.supports_search():
-            # Fall back to availability-walked active provider when the
-            # configured backend isn't a registered search provider (typo,
-            # uninstalled plugin, or capability mismatch).
-            provider = get_active_search_provider()
-
-        if provider is None:
-            # A bundled web plugin the user explicitly disabled looks
-            # identical to "no provider" here — point at the real cause
-            # (re-enable the plugin) rather than a generic setup hint.
-            disabled_key = _disabled_web_plugin_for(capability="search")
-            if disabled_key:
-                _vendor = disabled_key.split("/", 1)[-1]
-                response_data = {
-                    "success": False,
-                    "error": (
-                        f"web.search_backend is set to '{_vendor}', but its "
-                        f"plugin ('{disabled_key}') is disabled in config. "
-                        f"Re-enable it with `hermes plugins enable {disabled_key}` "
-                        "(or remove it from plugins.disabled)."
-                    ),
-                }
-            else:
-                response_data = {
-                    "success": False,
-                    "error": (
-                        "No web search provider configured. "
-                        "Run `hermes tools` to set one up."
-                    ),
-                }
+        if fallback_chain:
+            response_data = _run_search_backend_chain(fallback_chain, query, limit)
         else:
-            logger.info(
-                "Web search via %s: '%s' (limit: %d)",
-                provider.name, query, limit,
+            from agent.web_search_registry import (
+                get_active_search_provider,
+                get_provider as _wsp_get_provider,
+                _disabled_web_plugin_for,
             )
-            response_data = provider.search(query, limit)
+
+            backend = _get_search_backend()
+            provider = _wsp_get_provider(backend) if backend else None
+            if provider is None or not provider.supports_search():
+                # Fall back to availability-walked active provider when the
+                # configured backend isn't a registered search provider (typo,
+                # uninstalled plugin, or capability mismatch).
+                provider = get_active_search_provider()
+
+            if provider is None:
+                # A bundled web plugin the user explicitly disabled looks
+                # identical to "no provider" here — point at the real cause
+                # (re-enable the plugin) rather than a generic setup hint.
+                disabled_key = _disabled_web_plugin_for(capability="search")
+                if disabled_key:
+                    _vendor = disabled_key.split("/", 1)[-1]
+                    response_data = {
+                        "success": False,
+                        "error": (
+                            f"web.search_backend is set to '{_vendor}', but its "
+                            f"plugin ('{disabled_key}') is disabled in config. "
+                            f"Re-enable it with `hermes plugins enable {disabled_key}` "
+                            "(or remove it from plugins.disabled)."
+                        ),
+                    }
+                else:
+                    response_data = {
+                        "success": False,
+                        "error": (
+                            "No web search provider configured. "
+                            "Run `hermes tools` to set one up."
+                        ),
+                    }
+            else:
+                logger.info(
+                    "Web search via %s: '%s' (limit: %d)",
+                    provider.name, query, limit,
+                )
+                response_data = provider.search(query, limit)
+                response_data = _reject_empty_search_success(
+                    response_data, provider.name, query
+                )
 
         debug_call_data["results_count"] = len(response_data.get("data", {}).get("web", []))
         result_json = json.dumps(response_data, indent=2, ensure_ascii=False)

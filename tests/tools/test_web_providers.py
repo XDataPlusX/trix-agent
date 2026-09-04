@@ -212,6 +212,15 @@ class TestUnconfiguredErrorEnvelopeParity:
         assert "results" not in result
 
 
+async def _always_safe_url(url):
+    """Заглушка проверки безопасности URL для тестов очерёдности вызовов.
+
+    Отдельной функцией, а не lambda: она обязана быть корутиной — вызов в
+    диспетчере идёт через `await`.
+    """
+    return True
+
+
 class TestDispatchersTriggerPluginDiscovery:
     """Regression tests for #27580: each web_*_tool dispatcher must
     idempotently call ``_ensure_web_plugins_loaded()`` before consulting
@@ -310,6 +319,20 @@ class TestDispatchersTriggerPluginDiscovery:
             monkeypatch.setattr(
                 web_tools, "_load_web_config",
                 lambda: {"extract_backend": "firecrawl"},
+            )
+            # Предмет теста — очерёдность «сначала загрузка плагинов, потом
+            # поиск в реестре». Проверка безопасности URL здесь лишь
+            # декорация, но она ходит в НАСТОЯЩИЙ DNS: на машине, где
+            # `example.com` резолвится во внутренний диапазон (VPN,
+            # корпоративный резолвер, подмена ISP — здесь это было
+            # 198.18.0.72 из RFC 2544), защита честно блокирует адрес,
+            # список безопасных URL пустеет, и до загрузки плагинов дело
+            # не доходит вовсе. Тест падал не по своей теме и был записан
+            # в базовую линию как «известное падение» вместо починки.
+            monkeypatch.setattr(
+                web_tools, "async_is_safe_url",
+                _always_safe_url,
+                raising=False,
             )
             # Sanity: registry IS empty before the tool call.
             assert web_search_registry.get_provider("firecrawl") is None

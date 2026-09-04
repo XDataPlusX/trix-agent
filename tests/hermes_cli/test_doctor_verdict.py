@@ -264,3 +264,81 @@ class TestDoctorCliRealPath:
         payload = json.loads(result.stdout)
         assert payload["ok"] is False
         assert result.returncode != 0
+
+
+# ---------------------------------------------------------------------------
+# Замечания к поставке не должны отправлять клиента в поддержку
+# ---------------------------------------------------------------------------
+
+
+class TestAdvisoriesNeverReachTheClientVerdict:
+    """Найдено клиентом на живой машине 2026-09-04.
+
+    Клиент прошёл настройку целиком, бот ответил — и в конце получил
+    «Проверка завершена: часть неполадок исправить самостоятельно не
+    удалось… напишите в поддержку». Единственным содержимым «неполадок»
+    были три строки `npm audit` про сборочный инструментарий (esbuild/vite
+    в рабочих областях `web` и `ui-tui`, которые клиенту вообще не
+    поставляются как интерфейс).
+
+    Цепочка была такая: `doctor` кладёт их в `issues` → `ok` становится
+    False → `doctor_no_fix` в проходе поддержки падает → его починка
+    (`doctor --fix`) не умеет чинить npm-советы → перепроверка падает →
+    вердикт `not_fixed` → та самая фраза. И так на КАЖДОЙ машине, потому
+    что советы приходят из пакетов, которые мы же и поставляем.
+    """
+
+    def _result(self, **kw):
+        from hermes_cli.trix_doctor_verdict import DoctorRunResult
+
+        return DoctorRunResult(**kw)
+
+    def test_advisories_alone_leave_the_machine_ok(self):
+        result = self._result(advisories=["web workspace has 4 npm vulnerabilities"])
+        assert result.ok is True
+        assert result.remaining_issues == []
+
+    def test_advisories_do_not_flip_the_process_exit_code(self):
+        from hermes_cli.trix_doctor_verdict import doctor_exit_code
+
+        assert doctor_exit_code(self._result(advisories=["x has 1 npm vulnerability"])) == 0
+
+    def test_a_real_issue_still_flips_everything(self):
+        """Обратная сторона: «не считать советы» не должно превратиться в
+        «не считать ничего»."""
+        from hermes_cli.trix_doctor_verdict import doctor_exit_code
+
+        result = self._result(
+            issues=["Run 'hermes setup' to configure API keys"],
+            advisories=["x has 1 npm vulnerability"],
+        )
+        assert result.ok is False
+        assert doctor_exit_code(result) == 1
+
+    def test_advisories_are_reported_not_hidden(self):
+        """Вынести из вердикта — не то же самое, что спрятать: потребитель
+        (страница поддержки, установщик) обязан их видеть."""
+        import json
+
+        from hermes_cli.trix_doctor_verdict import verdict_json
+
+        payload = json.loads(verdict_json(self._result(advisories=["web workspace has 4 npm vulnerabilities"])))
+        assert payload["advisories"] == ["web workspace has 4 npm vulnerabilities"]
+        assert payload["verdict"] == "ok"
+
+    def test_the_client_sentence_is_the_all_good_one(self):
+        """Сквозная проверка того самого предложения, которое прочитал
+        клиент, — от вердикта доктора до текста прохода поддержки."""
+        from hermes_cli import trix_support
+
+        doctor_payload = {"ok": True, "remaining_issues": [], "advisories": ["x has 1 npm vulnerability"]}
+
+        def fake_doctor(*, fix, timeout):
+            return dict(doctor_payload)
+
+        original = trix_support._run_doctor_cli
+        trix_support._run_doctor_cli = fake_doctor
+        try:
+            assert trix_support._check_doctor_no_fix()["ok"] is True
+        finally:
+            trix_support._run_doctor_cli = original

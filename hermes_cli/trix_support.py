@@ -278,10 +278,20 @@ def _check_browser() -> dict:
 
 
 def _check_search() -> dict:
-    """Spec check 7: ``search_preflight.check_ddgs_backend``."""
-    from hermes_cli.search_preflight import check_ddgs_backend
+    """Spec check 7: ``search_preflight.check_search_backend``.
 
-    return check_ddgs_backend().to_dict()
+    Раньше звала ``check_ddgs_backend()`` — та проверяет только
+    импортируемость пакета ``ddgs`` и не смотрит на
+    ``web.search_backend``, так что клиент на SearXNG/Brave получал
+    вердикт про чужой поисковик (разбор 2026-09-04). Проход поддержки
+    обязан проверять бэкенд, который клиент реально выбрал, живым
+    запросом — это и делает ``check_search_backend()``.
+    ``check_ddgs_backend()`` остаётся как есть для ``scripts/install.sh``
+    (там вопрос буквально "встал ли пакет ddgs только что").
+    """
+    from hermes_cli.search_preflight import check_search_backend
+
+    return check_search_backend().to_dict()
 
 
 def _check_wizard_service() -> dict:
