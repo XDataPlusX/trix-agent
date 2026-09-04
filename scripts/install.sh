@@ -692,8 +692,8 @@ attempt_install_git() {
             case "$DISTRO" in
                 ubuntu|debian)
                     log_info "Installing Git via apt..."
-                    $sudo_cmd env DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=600 update -qq >/dev/null 2>&1 || true
-                    $sudo_cmd env DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=600 install -y -qq git >/dev/null 2>&1 || true
+                    $sudo_cmd env DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=1800 update -qq >/dev/null 2>&1 || true
+                    $sudo_cmd env DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=1800 install -y -qq git >/dev/null 2>&1 || true
                     ;;
                 fedora)
                     log_info "Installing Git via dnf..."
@@ -1111,13 +1111,16 @@ install_system_packages() {
     local pkg_install=""
     case "$DISTRO" in
         # -o DPkg::Lock::Timeout: ждать освобождения замка dpkg, а не
-        # отказывать сразу. На свежей машине apt почти наверняка занят
+        # отказывать сразу. Значение согласовано с тем, что рецепт
+        # cloud-init кладёт в /etc/apt/apt.conf.d: флаг командной строки
+        # ПЕРЕБИВАЕТ файл конфигурации, поэтому меньшее значение здесь
+        # молча урезало бы ожидание на клиентской машине до своего. На свежей машине apt почти наверняка занят
         # своими же службами (apt-daily, unattended-upgrades), и без
         # ожидания установка ripgrep/ffmpeg проваливается по причине, не
         # имеющей к ней никакого отношения. `apt` (в отличие от
         # `apt-get`) имеет собственное умолчание в 120 секунд -- этого
         # мало: разблокировка после unattended-upgrades занимает минуты.
-        ubuntu|debian) pkg_install="apt -o DPkg::Lock::Timeout=600 install -y"   ;;
+        ubuntu|debian) pkg_install="apt -o DPkg::Lock::Timeout=1800 install -y"   ;;
         fedora)        pkg_install="dnf install -y"   ;;
         arch)          pkg_install="pacman -S --noconfirm" ;;
     esac
@@ -1646,13 +1649,13 @@ install_deps() {
             log_info "Some build tools may be needed for Python packages..."
             if command -v sudo &> /dev/null; then
                 if sudo -n true 2>/dev/null; then
-                    sudo DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get -o DPkg::Lock::Timeout=600 update -qq && sudo DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get -o DPkg::Lock::Timeout=600 install -y -qq build-essential python3-dev libffi-dev >/dev/null 2>&1 || true
+                    sudo DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get -o DPkg::Lock::Timeout=1800 update -qq && sudo DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get -o DPkg::Lock::Timeout=1800 install -y -qq build-essential python3-dev libffi-dev >/dev/null 2>&1 || true
                     log_success "Build tools installed"
                 else
                     log_info "sudo is needed ONLY to install build tools (build-essential, python3-dev, libffi-dev) via apt."
                     log_info "Trix Agent itself does not require or retain root access."
                     if prompt_yes_no "Install build tools?" "yes"; then
-                        sudo DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get -o DPkg::Lock::Timeout=600 update -qq && sudo DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get -o DPkg::Lock::Timeout=600 install -y -qq build-essential python3-dev libffi-dev >/dev/null 2>&1 || true
+                        sudo DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get -o DPkg::Lock::Timeout=1800 update -qq && sudo DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get -o DPkg::Lock::Timeout=1800 install -y -qq build-essential python3-dev libffi-dev >/dev/null 2>&1 || true
                         log_success "Build tools installed"
                     fi
                 fi
