@@ -1,0 +1,1263 @@
+# Trix Agent static-message catalog -- English (baseline / source of truth)
+#
+# Only user-facing static messages from the CLI approval prompt and a handful
+# of gateway slash-command replies live here.  Agent-generated output, log
+# lines, error tracebacks, tool outputs, and slash-command descriptions stay
+# in English and are NOT translated -- see agent/i18n.py for scope rationale.
+#
+# Keys are dotted paths; nesting below is purely for readability.  Values may
+# contain {placeholder} tokens for str.format substitution.  When adding a
+# new key, add it to EVERY locale file (en/zh/ja/de/es/fr/tr/uk) in the same commit --
+# tests/agent/test_i18n.py asserts catalog parity.
+
+approval:
+  # CLI approval prompt -- shown when a dangerous command needs user review.
+  dangerous_header: "⚠️  DANGEROUS COMMAND: {description}"
+  choose_long:     "      [o]nce  |  [s]ession  |  [a]lways  |  [d]eny"
+  choose_short:    "      [o]nce  |  [s]ession  |  [d]eny"
+  prompt_long:     "      Choice [o/s/a/D]: "
+  prompt_short:    "      Choice [o/s/D]: "
+  choose_smart_deny: "      [o]nce  |  [d]eny"
+  prompt_smart_deny: "      Choice [o/D]: "
+  smart_deny_once_inputs: "o,once"
+  smart_deny_deny_inputs: "d,deny"
+  timeout:         "      ⏱ Timeout - denying command"
+  allowed_once:    "      ✓ Allowed once"
+  allowed_session: "      ✓ Allowed for this session"
+  allowed_always:  "      ✓ Added to permanent allowlist"
+  denied:          "      ✗ Denied"
+  cancelled:       "      ✗ Cancelled"
+  blocklist_message: "This command is on the unconditional blocklist and cannot be approved."
+
+gateway:
+  # Messenger replies to slash commands and implicit state changes.
+  approval_expired: "⚠️ Approval expired (agent is no longer waiting). Ask the agent to try again."
+  draining:         "⏳ Draining {count} active agent(s) before restart..."
+  goal_cleared:     "✓ Goal cleared."
+  no_active_goal:   "No active goal."
+  config_read_failed: "⚠️ Could not read config.yaml: {error}"
+  config_save_failed: "⚠️ Could not save config: {error}"
+
+  # /model command output -- shown after a model switch or when listing models.
+  # Provider names, model IDs, capability strings, and cost figures are NOT
+  # translated -- they're identifiers/values, not prose.  Only the labels
+  # ("Provider:", "Context:", etc.) and the help/footer lines are localized.
+  model:
+    error_prefix:           "Error: {error}"
+    switched:               "Model switched to `{model}`"
+    provider_label:         "Provider: {provider}"
+    context_label:          "Context: {tokens} tokens"
+    max_output_label:       "Max output: {tokens} tokens"
+    cost_label:             "Cost: {cost}"
+    capabilities_label:     "Capabilities: {capabilities}"
+    prompt_caching_enabled: "Prompt caching: enabled"
+    warning_prefix:         "Warning: {warning}"
+    saved_global:           "Saved to config.yaml (`--global`)"
+    session_only_hint:      "_(session only — add `--global` to persist)_"
+    current_label:          "Current: `{model}` on {provider}"
+    current_tag:            " (current)"
+    more_models_suffix:     " (+{count} more)"
+    usage_switch_model:     "`/model <name>` — switch model"
+    usage_switch_provider:  "`/model <name> --provider <slug>` — switch provider"
+    usage_persist:          "`/model <name> --global` — persist"
+
+  agents:
+    header:                "🤖 **Active Agents & Tasks**"
+    active_agents:         "**Active agents:** {count}"
+    this_chat:             " · this chat"
+    more:                  "... and {count} more"
+    running_processes:     "**Running background processes:** {count}"
+    async_jobs:            "**Gateway async jobs:** {count}"
+    background_delegations: "**Background delegations:** {count}"
+    none:                  "No active agents or running tasks."
+    state_starting:        "starting"
+    state_running:         "running"
+
+  approve:
+    no_pending:            "No pending command to approve."
+    once_singular:         "✅ Command approved. The agent is resuming..."
+    once_plural:           "✅ Commands approved ({count} commands). The agent is resuming..."
+    session_singular:      "✅ Command approved (pattern approved for this session). The agent is resuming..."
+    session_plural:        "✅ Commands approved (pattern approved for this session) ({count} commands). The agent is resuming..."
+    always_singular:       "✅ Command approved (pattern approved permanently). The agent is resuming..."
+    always_plural:         "✅ Commands approved (pattern approved permanently) ({count} commands). The agent is resuming..."
+
+  background:
+    usage:                 "Usage: /background <prompt>\nExample: /background Summarize the top HN stories today\n\nRuns the prompt in a separate session. You can keep chatting — the result will appear here when done."
+    started:               "🔄 Background task started: \"{preview}\"\nTask ID: {task_id}\nYou can keep chatting — results will appear when done."
+
+  branch:
+    db_unavailable:        "Session database not available."
+    no_conversation:       "No conversation to branch — send a message first."
+    create_failed:         "Failed to create branch: {error}"
+    switch_failed:         "Branch created but failed to switch to it."
+    branched_one:          "⑂ Branched to **{title}** ({count} message copied)\nOriginal: `{parent}`\nBranch: `{new}`\nUse `/resume` to switch back to the original."
+    branched_many:         "⑂ Branched to **{title}** ({count} messages copied)\nOriginal: `{parent}`\nBranch: `{new}`\nUse `/resume` to switch back to the original."
+
+  commands:
+    usage:                 "Usage: `/commands [page]`"
+    skill_header:          "⚡ **Skill Commands**:"
+    default_desc:          "Skill command"
+    none:                  "No commands available."
+    header:                "📚 **Commands** ({total} total, page {page}/{total_pages})"
+    nav_prev:              "`/commands {page}` ← prev"
+    nav_next:              "next → `/commands {page}`"
+    out_of_range:          "_(Requested page {requested} was out of range, showing page {page}.)_"
+
+  compress:
+    not_enough:            "Not enough conversation to compress (need at least 4 messages)."
+    no_provider:           "No provider configured -- cannot compress."
+    nothing_to_do:         "Nothing to compress yet (the transcript is still all protected context)."
+    aggressive_unsupported: "--aggressive is not supported; use '/compress here [N]' to keep only recent exchanges, or /undo to drop turns."
+    focus_line:            "Focus: \"{topic}\""
+    summary_failed:        "⚠️ Summary generation failed ({error}). {count} historical message(s) were removed and replaced with a placeholder; earlier context is no longer recoverable. Consider checking your auxiliary.compression model configuration."
+    aborted:               "⚠️ Compression aborted ({error}). No messages were dropped — conversation is unchanged. Run /compress to retry, /reset for a clean session, or check your auxiliary.compression model configuration."
+    aux_failed:            "ℹ️ Configured compression model `{model}` failed ({error}). Recovered using your main model — context is intact — but you may want to check `auxiliary.compression.model` in config.yaml."
+    failed:                "Compression failed: {error}"
+
+  deny:
+    stale:                 "❌ Command denied (approval was stale)."
+    no_pending:            "No pending command to deny."
+    denied_singular:       "❌ Command denied."
+    denied_plural:         "❌ Commands denied ({count} commands)."
+    denied_reason_singular: "❌ Command denied. Reason relayed to the agent: \"{reason}\""
+    denied_reason_plural:  "❌ Commands denied ({count} commands). Reason relayed to the agent: \"{reason}\""
+
+  fast:
+    not_supported:         "⚡ /fast isn't available for the current model — it has no paid faster mode."
+    status:                "⚡ Faster responses (costs more)\n\nCurrent mode: `{mode}`\n\nFast mode replies quicker for an extra charge; normal mode is standard price and speed.\n\n_Usage:_ `/fast <normal|fast|status>`"
+    unknown_arg:           "⚠️ Unknown argument: `{arg}`\n\n**Valid options:** normal, fast, status"
+    saved:                 "⚡ ✓ Response speed: **{label}** (saved to config)\n_(takes effect on next message)_"
+    session_only:          "⚡ ✓ Response speed: **{label}** (this session only)"
+    label_fast:            "faster, costs more"
+    label_normal:          "standard price"
+    status_fast:           "faster (costs more)"
+    status_normal:         "standard"
+    picker_title:          "⚡ **Faster responses (costs more)**\n\nCurrent mode: `{mode}`\n\nPick an option:"
+    choice_fast:           "fast — quicker replies, costs more"
+    choice_normal:         "normal — standard speed and price"
+
+  footer:
+    status:                "📎 Runtime footer: **{state}**\nFields: `{fields}`\nPlatform: `{platform}`"
+    usage:                 "Usage: `/footer [on|off|status]`"
+    saved:                 "📎 Runtime footer: **{state}**{example}\n_(saved globally — takes effect on next message)_"
+    example_line:          "\nExample: `{preview}`"
+    state_on:              "ON"
+    state_off:             "OFF"
+
+  goal:
+    unavailable:           "Goals unavailable on this session."
+    no_goal_set:           "No goal set."
+    paused:                "⏸ Goal paused: {goal}"
+    no_resume:             "No goal to resume."
+    resumed:               "▶ Goal resumed: {goal}\nSend any message to continue, or wait — I'll take the next step on the next turn."
+    invalid:               "Invalid goal: {error}"
+    set:                   "⊙ Goal set ({budget}-turn budget): {goal}\nI'll keep working until the goal is done, you pause/clear it, or the budget is exhausted.\nControls: /goal status · /goal pause · /goal resume · /goal clear"
+
+  help:
+    header:                "📖 **Trix Agent Commands**\n"
+    skill_header:          "\n⚡ **Skill Commands** ({count} active):"
+    more_use_commands:     "\n... and {count} more. Use `/commands` for the full paginated list."
+
+  insights:
+    invalid_days:          "Invalid --days value: {value}"
+    error:                 "Error generating insights: {error}"
+
+  kanban:
+    error_prefix:          "⚠ kanban error: {error}"
+    subscribed_suffix:     "(subscribed — you'll be notified when {task_id} completes or blocks)"
+    truncated_suffix:      "… (truncated; use `hermes kanban …` in your terminal for full output)"
+    no_output:             "(no output)"
+    wake:
+      completed:           "completed"
+      gave_up:             "gave up (retries exhausted)"
+      crashed:             "crashed (worker exited); dispatcher will retry"
+      timed_out:           "timed out; dispatcher will retry"
+      blocked:             "blocked; needs attention"
+      status_default:      "status changed"
+      status_joiner:       ", "
+      message:             "[kanban] Task {task_id} {status}.\nTitle: {title}\nAssignee: @{assignee}\nBoard: {board}\n\nCheck the result or decide the next step."
+
+  personality:
+    none_configured:       "No personalities configured in `{path}/config.yaml`"
+    header:                "🎭 **Available Personalities**\n"
+    none_option:           "• `none` — (no personality overlay)"
+    item:                  "• `{name}` — {preview}"
+    usage:                 "\nUsage: `/personality <name>`"
+    save_failed:           "⚠️ Failed to save personality change: {error}"
+    cleared:               "🎭 Personality cleared — using base agent behavior.\n_(takes effect on next message)_"
+    set_to:                "🎭 Personality set to **{name}**\n_(takes effect on next message)_"
+    unknown:               "Unknown personality: `{name}`\n\nAvailable: {available}"
+
+  profile:
+    header:                "👤 **Profile:** `{profile}`"
+    home:                  "📂 **Home:** `{home}`"
+
+  reasoning:
+    level_default:             "medium (default)"
+    level_disabled:            "none (disabled)"
+    scope_session:             "session override"
+    scope_global:              "global config"
+    status:                    "🧠 **Response thinking depth**\n\n**Level:** `{level}`\n**Scope:** {scope}\n**Display:** {display}\n\nHigher levels think more carefully and answer more accurately, but cost more and take longer; lower levels are faster and cheaper.\n\n_Usage:_ `/reasoning <none|minimal|low|medium|high|xhigh|max|ultra|reset|show|hide> [--global]`"
+    display_on:                "on ✓"
+    display_off:               "off"
+    display_set_on:            "🧠 ✓ Reasoning display: **ON**\nModel thinking will be shown before each response on **{platform}**."
+    display_set_off:           "🧠 ✓ Reasoning display: **OFF** for **{platform}**"
+    reset_global_unsupported:  "⚠️ `/reasoning reset --global` is not supported. Use `/reasoning <level> --global` to change the global default."
+    reset_done:                "🧠 ✓ Session reasoning override cleared; falling back to global config."
+    unknown_arg:               "⚠️ Unknown argument: `{arg}`\n\n**Valid levels:** none, minimal, low, medium, high, xhigh, max, ultra\n**Display:** show, hide\n**Persist:** add `--global` to save beyond this session"
+    picker_title:              "🧠 **Response thinking depth**\n\n**Level:** `{level}`\n**Scope:** {scope}\n**Display:** {display}\n\nHigher is more accurate but costs more and takes longer; lower is faster and cheaper.\n\nPick an option:"
+    choice_none:               "none — skip thinking before replying (faster, cheaper)"
+    choice_reset:              "reset — clear session override"
+    choice_show:               "show thinking in replies"
+    choice_hide:               "hide thinking from replies"
+    set_global:                "🧠 ✓ Thinking level set to `{effort}` — higher costs more and takes longer but is more accurate; lower is faster and cheaper (saved to config)\n_(takes effect on next message)_"
+    set_global_save_failed:    "🧠 ✓ Thinking level set to `{effort}` — higher costs more and takes longer but is more accurate; lower is faster and cheaper (session only — config save failed)\n_(takes effect on next message)_"
+    set_session:               "🧠 ✓ Thinking level set to `{effort}` — higher costs more and takes longer but is more accurate; lower is faster and cheaper (session only — add `--global` to persist)\n_(takes effect on next message)_"
+
+  reload_mcp:
+    cancelled:             "🟡 /reload-mcp cancelled. MCP tools unchanged."
+    always_followup:       "ℹ️ Future `/reload-mcp` calls will run without confirmation. Re-enable via `approvals.mcp_reload_confirm: true` in config.yaml."
+    confirm_prompt:        "⚠️ **Confirm /reload-mcp**\n\nReloading MCP servers rebuilds the tool set for this session and **invalidates the provider prompt cache** — the next message will re-send full input tokens.  On long-context or high-reasoning models this can be expensive.\n\nChoose:\n• **Approve Once** — reload now\n• **Always Approve** — reload now and silence this prompt permanently\n• **Cancel** — leave MCP tools unchanged\n\n_Text fallback: reply `/approve`, `/always`, or `/cancel`._"
+    header:                "🔄 **MCP Servers Reloaded**\n"
+    reconnected:           "♻️ Reconnected: {names}"
+    added:                 "➕ Added: {names}"
+    removed:               "➖ Removed: {names}"
+    none_connected:        "No MCP servers connected."
+    tools_available:       "\n🔧 {tools} tool(s) available from {servers} server(s)"
+    failed:                "❌ MCP reload failed: {error}"
+
+  reload_skills:
+    header:                "🔄 **Skills Reloaded**\n"
+    no_new:                "No new skills detected."
+    total:                 "\n📚 {count} skill(s) available"
+    added_header:          "➕ **Added Skills:**"
+    removed_header:        "➖ **Removed Skills:**"
+    item_with_desc:        "    - {name}: {desc}"
+    item_no_desc:          "    - {name}"
+    failed:                "❌ Skills reload failed: {error}"
+
+  reset:
+    header_default:        "✨ Session reset! Starting fresh."
+    header_new:            "✨ New session started!"
+    header_titled:         "✨ New session started: {title}"
+    title_rejected:        "\n⚠️ Title rejected: {error}"
+    title_error_untitled:  "\n⚠️ {error} — session started untitled."
+    title_empty_untitled:  "\n⚠️ Title is empty after cleanup — session started untitled."
+    tip:                   "\n✦ Tip: {tip}"
+
+  restart:
+    in_progress:           "⏳ Gateway restart already in progress..."
+    restarting:            "♻ Restarting gateway. If you aren't notified within 60 seconds, restart from the console with `hermes gateway restart`."
+
+  resume:
+    db_unavailable:        "Session database not available."
+    parse_error:           "⚠️ Could not parse `/resume` arguments: {error}.\nUse quotes around titles with spaces, for example: `/resume \"Project A Plan\"`."
+    matrix_no_named_sessions: "No named sessions found for this Matrix room.\nUse `/title My Session` to name the current room session, `/resume --all` to list all Matrix sessions, or `/resume --cross-room <session name>` to explicitly cross room boundaries."
+    matrix_blocked_no_origin: "⚠️ Matrix /resume blocked: this named session has no recorded room origin, so Trix Agent will not resume it inside the current room by default. Use `/resume --cross-room {name}` if you intentionally want to cross room boundaries."
+    matrix_blocked_other_room: "⚠️ Matrix /resume blocked: that session belongs to a different Matrix room ({room}). Use `/resume --cross-room {name}` if you intentionally want to resume it here."
+    matrix_cross_room_success: "⚠️ Cross-room resume: resumed **{title}** inside Matrix room **{room}**.\nFuture messages in this room will use that transcript until `/reset` or another `/resume`.{msg_part}"
+    blocked_not_owner:     "⚠️ /resume blocked: '**{name}**' belongs to a different user or chat. You can only resume sessions from this chat."
+    no_named_sessions:     "No named sessions found.\nUse `/title My Session` to name your current session, then `/resume My Session` to return to it later."
+    list_header:           "📋 **Named Sessions**\n"
+    list_item:             "• **{title}**{preview_part}"
+    list_item_numbered:    "{index}. **{title}**{preview_part}"
+    list_preview_suffix:   " — _{preview}_"
+    list_footer:           "\nUsage: `/resume <session name>`"
+    list_footer_numbered:  "\nUsage: `/resume <session name>` or `/resume <number>` (e.g. `/resume 1` for the most recent)"
+    list_failed:           "Could not list sessions: {error}"
+    out_of_range:          "Resume index {index} is out of range.\nUse `/resume` with no arguments to see available sessions."
+    not_found:             "No session found matching '**{name}**'.\nUse `/resume` with no arguments to see available sessions."
+    already_on:            "📌 Already on session **{name}**."
+    switch_failed:         "Failed to switch session."
+    resumed_one:           "↻ Resumed session **{title}** ({count} message). Conversation restored."
+    resumed_many:          "↻ Resumed session **{title}** ({count} messages). Conversation restored."
+    resumed_no_count:      "↻ Resumed session **{title}**. Conversation restored."
+
+  retry:
+    no_previous:           "No previous message to retry."
+
+  rollback:
+    not_enabled:           "Checkpoints are not enabled.\nEnable in config.yaml:\n```\ncheckpoints:\n  enabled: true\n```"
+    none_found:            "No checkpoints found for {cwd}"
+    invalid_number:        "Invalid checkpoint number. Use 1-{max}."
+    restored:              "✅ Restored to checkpoint {hash}: {reason}\nA pre-rollback snapshot was saved automatically."
+    restore_failed:        "❌ {error}"
+
+  diff:
+    not_enabled:           "Checkpoints are not enabled, so there's no session baseline.\nEnable in config.yaml:\n```\ncheckpoints:\n  enabled: true\n```\nPlain /diff still works — it uses git directly."
+    no_changes:            "No changes."
+    failed:                "{error}"
+
+  set_home:
+    save_failed:           "Failed to save home channel: {error}"
+    success:               "✅ Home channel set to **{name}** (ID: {chat_id}).\nCron jobs and cross-platform messages will be delivered here."
+
+  context:
+    header:                "🧠 **Context Window**"
+    model:                 "Model: `{model}`"
+    window:                "Window: {total} tokens"
+    in_use:                "In use: {used} / {total} ({pct}%)"
+    bar:                   "{bar}"
+    headroom:              "Headroom to limit: {headroom} tokens"
+    threshold:             "Auto-compresses at: {threshold} ({threshold_pct}%) — {to_go} to go"
+    over_threshold:        "⚠️ **Over auto-compression threshold ({threshold}, {threshold_pct}%)**"
+    compressions:          "Compressions this session: {count}"
+    last_savings:          "Last compression freed: {savings}% of context"
+    totals_header:         "Session totals (cumulative across {calls} API calls)"
+    totals_line:           "Input {input} · Output {output} · Reasoning {reasoning}"
+    total_billed:          "Total billed: {total}"
+    throughput_note:       "_Throughput, not context size — each call re-sends the window above._"
+    estimated:             "Estimated context: ~{count} tokens across {messages} messages"
+    detail_after_first:    "_(Full compression and throughput stats available after the first agent response)_"
+    no_data:               "No context data available yet. Send a message to start a session."
+
+  status:
+    header:                "📊 **Trix Agent Gateway Status**"
+    matrix_scope_header:   "**Matrix scope:**"
+    matrix_scope_room:     "  room: {room}"
+    matrix_scope_room_id:  "  room_id: {room_id}"
+    matrix_scope_thread:   "  thread_id: {thread_id}"
+    matrix_scope_mode:     "  session_scope: {scope}"
+    matrix_scope_key:      "  session_key: {session_key}"
+    session_id:            "**Session ID:** `{session_id}`"
+    title:                 "**Title:** {title}"
+    created:               "**Created:** {timestamp}"
+    last_activity:         "**Last Activity:** {timestamp}"
+    model:                 "**Model:** `{model}`"
+    model_provider:        "**Model:** `{model}` ({provider})"
+    context:               "**Context:** {used} / {total} ({pct}%)"
+    context_used:          "**Context:** ~{used} tokens"
+    tokens:                "**Lifetime tokens billed:** {tokens} _(not your current context size)_"
+    agent_running:         "**Agent Running:** {state}"
+    state_yes:             "Yes ⚡"
+    state_no:              "No"
+    queued:                "**Queued follow-ups:** {count}"
+    platforms:             "**Connected Platforms:** {platforms}"
+
+  stop:
+    stopped_pending:       "⚡ Stopped. The agent hadn't started yet — you can continue this session."
+    stopped:               "⚡ Stopped. You can continue this session."
+    no_active:             "No active task to stop."
+
+  title:
+    db_unavailable:        "Session database not available."
+    warn_prefix:           "⚠️ {error}"
+    empty_after_clean:     "⚠️ Title is empty after cleanup. Please use printable characters."
+    set_to:                "✏️ Session title set: **{title}**"
+    not_found:             "Session not found in database."
+    current_with_title:    "📌 Session: `{session_id}`\nTitle: **{title}**"
+    current_no_title:      "📌 Session: `{session_id}`\nNo title set. Usage: `/title My Session Name`"
+
+  topic:
+    not_telegram_dm:         "The /topic command is only available in Telegram private chats."
+    no_session_db:           "Session database not available."
+    unauthorized:            "You are not authorized to use /topic on this bot."
+    restore_needs_topic:     "To restore a session, first create or open a Telegram topic, then send /topic <session-id> inside that topic. To create a new topic, open All Messages and send any message there."
+    topics_disabled:         "Telegram topics are not enabled for this bot yet.\n\nHow to enable them:\n1. Open @BotFather.\n2. Choose your bot.\n3. Open Bot Settings → Threads Settings.\n4. Turn on Threaded Mode and make sure users are allowed to create new threads.\n\nThen send /topic again."
+    topics_user_disallowed:  "Telegram topics are enabled, but users are not allowed to create topics.\n\nOpen @BotFather → choose your bot → Bot Settings → Threads Settings, then turn off 'Disallow users to create new threads'.\n\nThen send /topic again."
+    enable_failed:           "Failed to enable Telegram topic mode: {error}"
+    bound_status:            "This topic is linked to:\nSession: {label}\nID: {session_id}\n\nUse /new to replace this topic with a fresh session.\nFor parallel work, open All Messages and send a message there to create another topic."
+    thread_ready:            "Telegram multi-session topics are enabled.\n\nThis topic will be used as an independent Trix Agent session. Use /new to replace this topic's current session. For parallel work, open All Messages and send a message there to create another topic."
+    untitled_session:        "Untitled session"
+
+  undo:
+    nothing:               "Nothing to undo."
+    removed:               "↩️ Undid {turns} turn(s) ({count} message(s)).\nBacked up to: \"{preview}\"\nCopy/edit the text above and send it to re-prompt from here."
+    invalid_count:         "Invalid count \"{arg}\" — use /undo or /undo N."
+
+  update:
+    platform_not_messaging:  "✗ /update is only available from messaging platforms. Run `hermes update` from the terminal."
+    not_git_repo:            "✗ Not a git repository — cannot update."
+    hermes_cmd_not_found:    "✗ Could not locate the `hermes` command. Trix Agent is running, but the update command could not find the executable on PATH or via the current Python interpreter. Try running `hermes update` manually in your terminal."
+    start_failed:            "✗ Failed to start update: {error}"
+    starting:                "⚕ Starting Trix Agent update… I'll stream progress here."
+
+  usage:
+    rate_limits:              "⏱️ **Rate Limits:** {state}"
+    header_session:           "📊 **Session Token Usage**"
+    label_model:              "Model: `{model}`"
+    label_input_tokens:       "Input tokens: {count}"
+    label_cache_read:         "Cache read tokens: {count}"
+    label_cache_write:        "Cache write tokens: {count}"
+    label_output_tokens:      "Output tokens: {count}"
+    label_total:              "Total: {count}"
+    label_api_calls:          "API calls: {count}"
+    label_cost:               "Cost: {prefix}${amount}"
+    label_cost_included:      "Cost: included"
+    label_context:            "Context: {used} / {total} ({pct}%)"
+    label_compressions:       "Compressions: {count}"
+    breakdown_header:         "🧩 **Context breakdown** _(estimated)_"
+    breakdown_line:           "• {label}: ~{count} ({pct}%)"
+    breakdown_cat_system_prompt:        "System prompt"
+    breakdown_cat_tool_definitions:     "Tool definitions"
+    breakdown_cat_rules:                "Rules"
+    breakdown_cat_skills:               "Skills"
+    breakdown_cat_mcp:                  "MCP"
+    breakdown_cat_subagent_definitions: "Subagent definitions"
+    breakdown_cat_memory:               "Memory"
+    breakdown_cat_conversation:         "Conversation"
+    header_session_info:      "📊 **Session Info**"
+    label_messages:           "Messages: {count}"
+    label_estimated_context:  "Estimated context: ~{count} tokens"
+    detailed_after_first:     "_(Detailed usage available after the first agent response)_"
+    no_data:                  "No usage data available for this session."
+    unknown_subcommand:       "Unknown /usage subcommand: `{args}`. Try `/usage` or `/usage reset [--force]`."
+    reset_wrong_provider:     "Banked usage resets are only available on the openai-codex provider. Switch with `/model` first."
+
+  credits:
+    not_logged_in:            "Billing is managed by your model provider, not here. Check your balance in your provider's own console."
+
+  verbose:
+    not_enabled:           "The `/verbose` command is not enabled for messaging platforms.\n\nEnable it in `config.yaml`:\n```yaml\ndisplay:\n  tool_progress_command: true\n```"
+    mode_off:              "⚙️ Tool progress: **OFF** — no tool activity shown."
+    mode_new:              "⚙️ Tool progress: **NEW** — shown when tool changes (preview length: `display.tool_preview_length`, default 40)."
+    mode_all:              "⚙️ Tool progress: **ALL** — every tool call shown (preview length: `display.tool_preview_length`, default 40)."
+    mode_verbose:          "⚙️ Tool progress: **VERBOSE** — every tool call with full arguments."
+    mode_log:              "⚙️ Tool progress: **LOG** — silent in chat; tool calls written to ~/.hermes/logs/tool_calls.log."
+    saved_suffix:          "_(saved for **{platform}** — takes effect on next message)_"
+    save_failed:           "_(could not save to config: {error})_"
+
+  voice:
+    enabled_voice_only:    "Voice mode enabled.\nI'll reply with voice when you send voice messages.\nUse /voice tts to get voice replies for all messages."
+    disabled_text:         "Voice mode disabled. Text-only replies."
+    tts_enabled:           "Auto-TTS enabled.\nAll replies will include a voice message."
+    status_mode:           "Voice mode: {label}"
+    status_channel:        "Voice channel: #{channel}"
+    status_participants:   "Participants: {count}"
+    status_member:         "  - {name}{status}"
+    speaking:              " (speaking)"
+    enabled_short:         "Voice mode enabled."
+    disabled_short:        "Voice mode disabled."
+    label_off:             "Off (text only)"
+    label_voice_only:      "On (voice reply to voice messages)"
+    label_all:             "TTS (voice reply to all messages)"
+    help:                  "{toggle}\n\n**How /voice works**\n• `/voice on` — voice reply when you send a voice message\n• `/voice tts` — voice reply to *every* message\n• `/voice off` — back to text-only replies\n• `/voice status` — show the current mode\n• `/voice` (no argument) — quick toggle between on and off{channels}"
+    help_channels:         "\n\n**Live voice channels (Discord)**\n• Join a voice channel first, then `/voice channel` — I'll join, listen, and speak my replies\n• `/voice leave` — disconnect from the voice channel"
+
+  yolo:
+    disabled:                   "⚠️ YOLO mode **OFF** for this session — dangerous commands will require approval."
+    enabled:                    "⚡ YOLO mode **ON** for this session — all commands auto-approved. Use with caution."
+
+  shared:
+    session_db_unavailable:      "Session database not available."
+    session_db_unavailable_prefix: "Session database not available"
+    session_not_found:           "Session not found in database."
+    warn_passthrough:            "⚠️ {error}"
+
+trix:
+  blueprint:
+    catalog_header: 'Automation Blueprints — `/blueprint <name>` and I''ll ask you what I need:
+
+      '
+    catalog_tip: 'Tip: `/blueprint <name>` walks you through it. Power users can pass values inline, e.g.
+      `/blueprint morning-brief time=08:00`.'
+    missing_values: 'Can''t set up ''{title}'' — missing: {fields}.
+
+      Or just run /blueprint {bp_key} and I''ll ask you for the values.'
+    morning-brief:
+      title: Morning briefing
+      description: 'A short daily briefing: today''s calendar, weather, and anything urgent waiting on you.'
+      slot:
+        time:
+          label: What time?
+          help: 24h local time, e.g. 08:00
+        deliver:
+          label: Where to deliver?
+          help: origin = the chat you set this up from (or your configured home channel when created from
+            the dashboard); local = save only, no message; or any connected platform name
+    important-mail:
+      title: Important-mail monitor
+      description: Check your inbox periodically and ping you ONLY about mail that actually needs attention.
+      slot:
+        interval_min:
+          label: How often?
+          help: minutes between checks
+        criteria:
+          label: Only notify me if the mail…
+        deliver:
+          label: Where to deliver?
+          help: origin = the chat you set this up from (or your configured home channel when created from
+            the dashboard); local = save only, no message; or any connected platform name
+    weekly-review:
+      title: Weekly review
+      description: 'A weekly recap: what got done, what''s still open, and what''s coming up.'
+      slot:
+        time:
+          label: What time?
+          help: 24h local time, e.g. 08:00
+        day:
+          label: Which day?
+        deliver:
+          label: Where to deliver?
+          help: origin = the chat you set this up from (or your configured home channel when created from
+            the dashboard); local = save only, no message; or any connected platform name
+    workday-start:
+      title: Workday start reminder
+      description: A weekday nudge with your agenda and top priorities.
+      slot:
+        time:
+          label: What time?
+          help: 24h local time, e.g. 08:00
+        deliver:
+          label: Where to deliver?
+          help: origin = the chat you set this up from (or your configured home channel when created from
+            the dashboard); local = save only, no message; or any connected platform name
+    custom-reminder:
+      title: Custom reminder
+      description: A recurring reminder in your own words, on your schedule.
+      slot:
+        what:
+          label: Remind me to…
+        time:
+          label: What time?
+          help: 24h local time, e.g. 08:00
+        recurrence:
+          label: Repeat on
+        deliver:
+          label: Where to deliver?
+          help: origin = the chat you set this up from (or your configured home channel when created from
+            the dashboard); local = save only, no message; or any connected platform name
+    evening-winddown:
+      title: Evening wind-down
+      description: 'An end-of-day check-in: tomorrow''s calendar at a glance and anything you should prep
+        tonight.'
+      slot:
+        time:
+          label: What time?
+          help: 24h local time, e.g. 08:00
+        deliver:
+          label: Where to deliver?
+          help: origin = the chat you set this up from (or your configured home channel when created from
+            the dashboard); local = save only, no message; or any connected platform name
+    news-digest:
+      title: Topic news digest
+      description: A recurring digest on a topic you care about — deduped against what was already sent, so
+        only genuinely new items land.
+      slot:
+        topic:
+          label: What topic?
+          help: a subject, product, person, or search phrase
+        time:
+          label: What time?
+          help: 24h local time, e.g. 08:00
+        recurrence:
+          label: Repeat on
+        count:
+          label: How many bullets?
+        deliver:
+          label: Where to deliver?
+          help: origin = the chat you set this up from (or your configured home channel when created from
+            the dashboard); local = save only, no message; or any connected platform name
+    bill-renewal-watch:
+      title: Bills & renewals reminder
+      description: A heads-up before a recurring payment, subscription renewal, or due date — so nothing auto-charges
+        by surprise.
+      slot:
+        what:
+          label: What's due?
+        time:
+          label: What time?
+          help: 24h local time, e.g. 08:00
+        recurrence:
+          label: Repeat on
+        deliver:
+          label: Where to deliver?
+          help: origin = the chat you set this up from (or your configured home channel when created from
+            the dashboard); local = save only, no message; or any connected platform name
+    price-watch:
+      title: Price & availability watch
+      description: Watch an exact product, flight, hotel, or listing and alert when your price or availability
+        condition is met.
+      slot:
+        item:
+          label: What exactly to watch?
+          help: URL or precise description — variant, dates, seller
+        condition:
+          label: Alert me when…
+          help: threshold price (state the currency), availability, or terms change
+        interval_h:
+          label: How often?
+          help: hours between checks — be gentle with rate limits
+        deliver:
+          label: Where to deliver?
+          help: origin = the chat you set this up from (or your configured home channel when created from
+            the dashboard); local = save only, no message; or any connected platform name
+    competitor-watch:
+      title: Competitor news watch
+      description: Track named companies for material news — launches, pricing, funding, filings — with a
+        cited digest.
+      slot:
+        companies:
+          label: Which companies?
+          help: canonical names and domains; aliases help dedup
+        categories:
+          label: Which events matter?
+        time:
+          label: What time?
+          help: 24h local time, e.g. 08:00
+        recurrence:
+          label: Repeat on
+        deliver:
+          label: Where to deliver?
+          help: origin = the chat you set this up from (or your configured home channel when created from
+            the dashboard); local = save only, no message; or any connected platform name
+    habit-checkin:
+      title: Habit check-in
+      description: A recurring nudge to keep a habit on track and reflect on whether you did it.
+      slot:
+        habit:
+          label: Which habit?
+        time:
+          label: What time?
+          help: 24h local time, e.g. 08:00
+        recurrence:
+          label: Repeat on
+        deliver:
+          label: Where to deliver?
+          help: origin = the chat you set this up from (or your configured home channel when created from
+            the dashboard); local = save only, no message; or any connected platform name
+    hydration-move:
+      title: Hydration & movement nudge
+      description: A periodic nudge during the day to drink water, stand up, and stretch.
+      slot:
+        interval_hours:
+          label: How often?
+          help: hours between nudges
+        start_hour:
+          label: Start hour
+          help: first hour of the active window (24h)
+        end_hour:
+          label: End hour
+          help: last hour of the active window (24h)
+        deliver:
+          label: Where to deliver?
+          help: origin = the chat you set this up from (or your configured home channel when created from
+            the dashboard); local = save only, no message; or any connected platform name
+    meal-plan:
+      title: Weekly meal plan
+      description: A weekly meal plan plus a consolidated grocery list, tuned to your diet and how much time
+        you have to cook.
+      slot:
+        diet:
+          label: Diet?
+        meals:
+          label: Meals per day?
+        effort:
+          label: Cooking effort?
+        time:
+          label: What time?
+          help: 24h local time, e.g. 08:00
+        day:
+          label: Which day?
+        deliver:
+          label: Where to deliver?
+          help: origin = the chat you set this up from (or your configured home channel when created from
+            the dashboard); local = save only, no message; or any connected platform name
+    learn-daily:
+      title: Daily learning drip
+      description: One bite-sized lesson a day on a topic you want to learn, building progressively over time.
+      slot:
+        topic:
+          label: Learn about…
+        time:
+          label: What time?
+          help: 24h local time, e.g. 08:00
+        recurrence:
+          label: Repeat on
+        deliver:
+          label: Where to deliver?
+          help: origin = the chat you set this up from (or your configured home channel when created from
+            the dashboard); local = save only, no message; or any connected platform name
+    gratitude-journal:
+      title: Gratitude & reflection prompt
+      description: A gentle evening prompt to reflect on the day and note what went well.
+      slot:
+        time:
+          label: What time?
+          help: 24h local time, e.g. 08:00
+        recurrence:
+          label: Repeat on
+        deliver:
+          label: Where to deliver?
+          help: origin = the chat you set this up from (or your configured home channel when created from
+            the dashboard); local = save only, no message; or any connected platform name
+    on-this-day:
+      title: On-this-day discovery
+      description: 'A daily dose of curiosity: a notable historical event, fact, or word for the day.'
+      slot:
+        flavor:
+          label: What kind?
+        time:
+          label: What time?
+          help: 24h local time, e.g. 08:00
+        deliver:
+          label: Where to deliver?
+          help: origin = the chat you set this up from (or your configured home channel when created from
+            the dashboard); local = save only, no message; or any connected platform name
+  approval:
+    header: "⚠️ <b>Command Approval Required</b>\n\n"
+    reason_label: "Reason: "
+    timeout_note: ""
+    button_once: "✅ Allow Once"
+    button_session: "✅ Session"
+    button_always: "✅ Always"
+    button_deny: "❌ Deny"
+    # Outcome of a tap / a text approval.  These MUST stay byte-identical to
+    # the literals they replaced in plugins/platforms/telegram/adapter.py --
+    # the English operator path is not allowed to shift.
+    resolved_once: "✅ Approved once"
+    resolved_session: "✅ Approved for session"
+    resolved_always: "✅ Approved permanently"
+    resolved_deny: "❌ Denied"
+    resolved_fallback: "Resolved"
+    resolved_by: "{label} by {user}"
+    expired_label: "⌛ Approval expired"
+    expired_text: "{label} — no command was waiting. It already timed out (and was denied) or was resolved elsewhere."
+    callback_invalid_data: "Invalid approval data."
+    callback_unauthorized: "⛔ You are not authorized to approve commands."
+    callback_already_resolved: "This approval has already been resolved."
+    confirm_once: "✅ Approved once"
+    confirm_always: "🔒 Always approve"
+    confirm_cancel: "❌ Cancelled"
+    confirm_unauthorized: "⛔ You are not authorized to answer this prompt."
+    confirm_already_resolved: "This prompt has already been resolved."
+    default_user: "User"
+  clarify:
+    button_other: "✏️ Other (type answer)"
+    # The window through which the agent asks the customer a question when
+    # it's missing information. "Not authorized" / "already resolved"
+    # reuse trix.approval.confirm_unauthorized / confirm_already_resolved
+    # -- same literal, no second key for it.
+    expired_tooltip: "⚠️ This prompt expired — please /retry."
+    expired_body: "<i>⚠️ This question expired or the session reset — please /retry.</i>"
+    awaiting_text_tooltip: "✏️ Type your answer in the chat."
+    awaiting_text_body: "<i>Awaiting typed response from {user}…</i>"
+    # Substituted for the lost choice text (race with timeout / session
+    # reset) -- lands in the transcript as the CUSTOMER'S ANSWER, not a
+    # system string.
+    choice_fallback: "choice {n}"
+    # A button from a message the bot sent under an older callback_data
+    # format lands here after a Trix Agent update -- rare but reachable
+    # (spec 16, Task 4 addendum).
+    invalid_choice: "Invalid choice."
+  commands:
+    alias_note: " (alias: {aliases})"
+  profile:
+    profile_label: "Profile: {profile}"
+    home_label: "Home: {home}"
+  bundles:
+    unavailable: "Bundles subsystem unavailable: {error}"
+    none: "No skill bundles installed.\nCreate one with: hermes bundles create <name> --skill <s1> --skill <s2>\nDirectory: {dir}"
+    header: "Skill Bundles ({count} installed):"
+    entry: "/{slug} — {desc} ({count} skills)"
+    invoke_hint: "Invoke a bundle with /<slug> to load all its skills."
+    default_desc: "Load {count} skills"
+  egress:
+    title: "Egress proxy status"
+    enabled_yes: "yes"
+    enabled_no: "no"
+    missing: "(missing)"
+    unknown: "(unknown)"
+    not_generated: "(not generated)"
+    stopped: "(stopped)"
+    enabled: "Enabled: {value}"
+    binary: "Binary: {value}"
+    binary_version: "Binary version: {value}"
+    config: "Config: {value}"
+    ca_cert: "CA cert: {value}"
+    tunnel_port: "Tunnel port: {value}"
+    process: "Process: {value}"
+    listening: "Listening: {value}"
+    credential_src: "Credential src: {value}"
+    docker_enforce: "Docker enforce: {value}"
+    scope: "Scope: Docker backend only in this release"
+    token_mappings_header: "Token mappings:"
+    token_mapping_entry: "  - {name}: {token} ({hosts})"
+    uncovered_header: "Uncovered providers (real credentials still visible inside the sandbox):"
+    uncovered_entry: "  - {name}"
+    next_setup: "Next: run `hermes egress setup` to mint tokens and write proxy.yaml."
+    next_start: "Next: run `hermes egress start` before launching Docker sandboxes."
+  errors:
+    provider:
+      auth_failed: "🔑 The provider rejected the key. Check it in the setup wizard — the address and password arrived by email when the machine was created."
+      policy_rejected: "🚫 The model provider rejected the request — its safety filter triggered. Try rephrasing your question."
+      rate_limited: "⏱️ The model provider is rate-limiting requests. Please wait a moment and try again."
+      generic_failed: "⚠️ The model provider didn't respond after several attempts. This looks like a temporary issue on their end — please try again shortly."
+      billing: "💳 The provider rejected the request: the key is out of funds. Top up the balance in the provider's dashboard — I'll continue right where I left off."
+      billing_next_step: "This turn did not run — nothing you asked for was done. The conversation itself is intact: once the balance is topped up, just send that last message again."
+      billing_top_up_link: "Top-up page: {url}"
+      tls: "🔒 Couldn't verify the certificate while connecting to the provider. This is usually a proxy or a network issue on the machine."
+      unavailable: "⚠️ The provider isn't responding right now. This is on their end — please try again shortly. (code {status})"
+      unavailable_no_code: "⚠️ The provider isn't responding right now. This is on their end — please try again shortly."
+      model_not_found: "🧭 The provider couldn't find that model. Check the model name with /model — it may have been renamed or isn't available on this key. Retrying won't fix this on its own."
+      account_policy_blocked: "🚫 The provider blocked the request because of the account's data-privacy policy settings, not because of anything in your message. Check the data policy in the provider's account settings (e.g. OpenRouter's Data Policy)."
+      malformed_request: "⚠️ The provider rejected this request. Retrying it unchanged may not help — if this keeps happening, let whoever manages this machine know."
+    fallback:
+      switched: "🔄 Switched to the fallback provider — answering through {new_model} ({new_provider}). The main one was {old_model} ({old_provider})."
+      switched_after_empty: "↻ Switched to the fallback model: {new_model} ({new_provider}). The previous one, {old_model} ({old_provider}), came back empty several times in a row."
+      switch_attempt: "🔄 Trying the fallback provider: {new_model} ({new_provider}). The main one was {old_model} ({old_provider})."
+      attempt_billing: "⚠️ The main key ran out of funds — switching to the fallback provider…"
+      attempt_limit: "⚠️ The main provider rate-limited requests — switching to the fallback…"
+      attempt_unreachable: "⚠️ The main provider is unreachable — switching to the fallback…"
+      attempt_upstream: "⚠️ The {upstream} model rate-limited the request — switching to the fallback model…"
+      attempt_upstream_unknown: "⚠️ The upstream model rate-limited the request — switching to the fallback model…"
+      attempt_auth_failed: "🔐 Authentication failed and couldn't be refreshed — switching to the fallback provider…"
+      attempt_content_filter: "⚠️ The provider's safety filter blocked this request — switching to the fallback provider…"
+      attempt_empty_response: "⚠️ The model returned an empty or malformed response — switching to the fallback provider…"
+      trying_now: "Trying a fallback provider…"
+    empty_response:
+      storage_disk: "⚠️ Session storage was temporarily unavailable, so this turn was stopped to protect your conversation history. Please check available disk space, then send your message again."
+      storage_retry: "⚠️ Session storage was temporarily unavailable, so this turn was stopped to protect your conversation history. Your message should already be saved — please send it again in a moment."
+      session_too_large: "⚠️ Session too large for the model's context window.\nUse /compact to compress the conversation, or /reset to start fresh."
+      request_failed: "The request failed: {error_detail}\nTry again or use /reset to start a fresh session."
+      interrupted: "⚠️ Your message was interrupted before processing started (likely by a recent /stop). Please send it again."
+      processing_stopped: "⚠️ Processing stopped: {err}. Try again."
+      no_response: "⚠️ Processing completed but no response was generated. This may be a transient error — try sending your message again."
+      not_processed: "⚠️ Your message wasn't processed (the previous turn was still being cleaned up). Please send it again."
+    provider_auth_exception: "⚠️ Provider authentication failed: {exc}"
+    status_hint:
+      unauthorized: " Check your provider API key in the setup wizard."
+      quota: " Your API balance or quota is exhausted. Check your provider dashboard."
+      usage_limit_resets_in: " Your plan's usage limit has been reached. It resets in ~{hours}h."
+      usage_limit_reached: " Your plan's usage limit has been reached. Please wait until it resets."
+      rate_limited: " You are being rate-limited. Please wait a moment and try again."
+      overloaded: " The API is temporarily overloaded. Please try again shortly."
+      rejected: " The request was rejected by the API."
+    unexpected_error: "Sorry, I encountered an unexpected error.{status_hint}\nTry again or use /reset to start a fresh session."
+    session_info:
+      model: "◆ Model: `{model}`"
+      provider: "◆ Provider: {provider}"
+      context_config: "◆ Context: {ctx_display} tokens (config)"
+      context_default: "◆ Context: {ctx_display} tokens (default — set model.context_length in config to override)"
+      context_detected: "◆ Context: {ctx_display} tokens (detected)"
+      endpoint: "◆ Endpoint: {base_url}"
+    suggestions_failed: "Suggestions command failed: {e}"
+    blueprint_failed: "Cron blueprint command failed: {e}"
+    compression_timeout: "⚠️ Context compression timed out after {seconds:.1f}s — the auxiliary model returned nothing. No messages were dropped, continuing without compression. Run /compress to retry, or /reset to start a fresh conversation. If this keeps happening, tell whoever administers this bot."
+    compression_aux_fallback: "ℹ️ The helper model used to compress the conversation did not respond ({err}). Continuing on the main model — your context is intact. If this keeps happening, tell whoever administers this bot."
+    compression_aborted: "⚠️ Context compression was aborted ({err}). No messages were dropped, the conversation is unchanged. Run /compress to retry, or /reset to start fresh. If this keeps happening, tell whoever administers this bot."
+    empty_model_response: "⚠️ The model returned no response after processing tool results. This can happen with some models — try again or rephrase your question."
+  agent:
+    # Task 11: status/final-response lines from agent/conversation_loop.py
+    # and agent/manual_compression_feedback.py that reach the customer's
+    # chat. Only the two "provider_rate_limit_*" keys and
+    # "ollama_context_too_small" carry English text that differs from the
+    # original literal in the code's t(..., default=...) fallback -- those
+    # three named an upstream product/brand or pointed at an inaccessible
+    # config.yaml edit and had to be reworded even in English. Every other
+    # key below is byte-identical to its upstream English so pre-existing
+    # English-locale tests keep passing; only locales/ru.yaml carries a
+    # real translation for them. See the code call sites for the exact
+    # wiring.
+    provider_rate_limit_active: "The model provider's rate limit is active — resets in {reset_in}."
+    provider_rate_limit_no_fallback: "No fallback provider is configured. Please try again once the limit resets, or ask whoever administers this machine to add one."
+    ollama_context_too_small: "❌ Ollama runtime context is too small for tool use"
+    safety_refusal_fallback: "⚠️ Model declined to respond (safety refusal) — trying fallback..."
+    safety_refusal_final: "⚠️ The model declined to respond to this request (safety refusal)."
+    payload_too_large_retry: "⚠️  Request payload too large (413) — compression attempt {attempt}/{max_attempts}..."
+    empty_after_tools_use_earlier: "↻ Empty response after tool calls — using earlier content as final answer"
+    empty_after_tools_nudge: "⚠️ Model returned empty after tool calls — nudging to continue"
+    empty_response_retrying: "⚠️ Empty response from model — retrying ({attempt}/3) in {seconds}s"
+    no_content_final_with_fallback: "❌ Model returned no content after all retries and fallback attempts."
+    no_content_final_no_fallback: "❌ Model returned no content after all retries. No fallback providers configured."
+    compression_lock_busy: "⏳ Compression already in progress for this session (holder: {holder}). Please wait for it to finish."
+    compression_lock_unknown: "⏳ Compression skipped: could not acquire this session's compression lock. Another compression may still be running, or the lock check failed — try again shortly."
+  busy:
+    status_min_elapsed: "{elapsed_min} min elapsed"
+    status_iteration: "iteration {iteration}/{max_iter}"
+    status_running: "running: {current_tool}"
+    steered: "⏩ Steered into current run{status_detail}. Your message arrives after the next tool call."
+    redirected: "↪ Redirected current run{status_detail}. I'll adjust using your correction."
+    queued_subagent: "⏳ Subagent working{status_detail} — your message is queued for when it finishes (use /stop to cancel everything)."
+    queued_compression: "⏳ Compressing context{status_detail} — your message is queued for when it finishes (use /stop to cancel everything)."
+    queued: "⏳ Queued for the next turn{status_detail}. I'll respond once the current task finishes."
+    interrupting: "⚡ Interrupting current task{status_detail}. I'll respond to your message shortly."
+    drain_queued_restart: "⏳ Gateway restarting — queued for the next turn after it comes back."
+    drain_queued_shutdown: "⏳ Gateway shutting down — queued for the next turn after it comes back."
+    drain_busy_restart: "⏳ Gateway is restarting and is not accepting another turn right now."
+    drain_busy_shutdown: "⏳ Gateway is shutting down and is not accepting another turn right now."
+    drain_command_reject_restart: "⏳ Gateway is restarting and is not accepting new work right now."
+    drain_command_reject_shutdown: "⏳ Gateway is shutting down and is not accepting new work right now."
+    external_drain_active: "⏳ This agent is draining for a maintenance action and isn't accepting new turns right now. It'll be back in a moment — please resend shortly."
+    turn_lease_timeout: "⏳ Another turn is still running on this session. To protect the transcript, this message was not processed. Wait for the active turn to finish, then resend it."
+    shutdown_notice_restart: "⚠️ Gateway restarting — Your current task will be interrupted. Send any message after restart and I'll try to resume where you left off."
+    shutdown_notice_shutdown: "⚠️ Gateway shutting down — Your current task will be interrupted."
+    reject_model: "Agent is running — wait or /stop first, then switch models."
+    reject_codex_runtime: "Agent is running — wait or /stop first, then change runtime."
+    reject_moa: "Agent is running — wait or /stop first, then run /moa."
+    reject_generic: "⏳ Agent is running — `/{name}` can't run mid-turn. Wait for the current response or `/stop` first."
+    resumed: "▶️ Resumed — new work is accepted again."
+    not_paused: "The agent wasn't paused."
+    already_paused: "⏸️ The agent is already paused{suffix}. Use `/pause off` to resume."
+    paused: "⏸️ Paused{suffix}. New cron/kanban/gateway work is on hold; in-flight work finishes normally. Use `/pause off` to resume."
+    queue_usage: "Usage: /queue <prompt>"
+    queued_simple: "Queued for the next turn."
+    queued_with_count: "Queued for the next turn. ({depth} queued)"
+    steer_usage: "Usage: /steer <prompt>"
+    steer_usage_no_agent: "Usage: /steer <prompt>  (no agent is running; sending as a normal message)"
+    steer_agent_starting: "Agent still starting — /steer queued for the next turn."
+    steer_failed: "⚠️ Couldn't add that to the running turn. Try again once it finishes."
+    steer_queued: "⏩ Steer queued — arrives after the next tool call: '{preview}'"
+    steer_rejected: "Steer rejected (empty payload)."
+    steer_no_active_agent: "No active agent — /steer queued for the next turn."
+    goal_busy_reject: "Agent is running — use /goal status / pause / clear / wait mid-run, or /stop before setting a new goal."
+    stop_force_stopped: "⚡ Force-stopped. The agent was still starting — session unlocked."
+  status:
+    working: "⏳ Working — {minutes} min"
+    working_with_action: "⏳ Working — {minutes} min — {action}"
+  setup_wizard:
+    reply: "🔐 Agent settings: {url}\nThe login and password are in the email that arrived the day the machine was created, to the address given at order time. Search your inbox for \"Trix\" — the email is sent once, there is no other copy of the password.\n⚠️ The certificate is self-signed — your browser will warn about an untrusted connection, that's expected, proceed anyway."
+    failed: "⚠️ Could not restart the setup wizard service. Try again in a minute — if it still doesn't work, contact support."
+    port_unreachable: "⚠️ Port 8443 isn't responding — if the link doesn't open, contact support."
+  version:
+    unreleased_build: "(unreleased build)"
+  session_reset:
+    idle: "🕓 We haven't talked here for {duration} — starting a new conversation so it doesn't drag along what is no longer relevant.\nThe previous one is saved: /resume lists recent conversations and brings back the one you need. If it isn't there, just ask me — I'll search the earlier ones."
+    suspended: "⏹️ The previous conversation was stopped — continuing with a clean slate.\nTo bring the stopped one back: /resume. If it isn't there, just ask me — I'll search the earlier ones."
+    restart: "🔌 I was restarting and didn't manage to restore the previous conversation — starting a new one.\nThe previous one is saved: /resume brings it back. If it isn't there, just ask me — I'll search the earlier ones."
+    daily: "🕓 A new day has begun — starting a new conversation.\nThe previous one is saved: /resume. If it isn't there, just ask me — I'll search the earlier ones."
+  gateway_restart:
+    back_online: "♻️ I'm back online."
+    session_continues: "♻️ I restarted — the conversation continues from where it left off."
+    recovered_prefix: "♻️ It looks like I already sent this, but I was restarting while it went out. Sending it again so it doesn't get lost:\n\n"
+  # Task 19: raw English literals in gateway/slash_commands.py that were
+  # never wired through t() -- see docs/product/plans/2026-08-17-trix-agent-
+  # telegram-l10n.md, "Task 19".  Keyed per command so a reviewer can find
+  # the call site quickly.  A few entries intentionally do NOT read
+  # byte-identical to the literal they replaced -- the original advised an
+  # action the Telegram-only client cannot take (a `hermes` CLI command, a
+  # server file path).  Those are called out in the task's completion report.
+  cmd:
+    shared:
+      unknown_error: "unknown error"
+      # Shared across every inline-window callback gate that guards a
+      # setting change (the /model picker's mm:/mc:/mp:/mg:/mpv:/mpg:/mb,
+      # and the /fast, /reasoning choice picker's cp:) -- one phrase, one
+      # place to edit, instead of each window drifting its own wording.
+      not_authorized_setting: "⛔ You are not authorized to change this setting."
+    debug:
+      inline: "Not uploaded to any third-party service — note this message itself travels over {platform}.\n\n```\n{report}\n```\n\nAlso saved to `{path}` on the server."
+      too_long: "This agent never uploads debug reports anywhere, and this one is too long to paste inline here without truncating it.\n\nThe full report was saved to `{path}` on the server — ask whoever administers this machine to open it there."
+    model:
+      switch_failed: "Model switch to {new_model} failed ({exc}); staying on {cur_model}."
+      credentials_failed: "⚠️ Could not connect to provider '{provider}' — check its access settings or try a different model."
+      once_note: "    (next turn only — restores after one response)"
+      switch_cancelled: "🟡 Model switch cancelled. Current model unchanged ({current_model})."
+      cost_warning_title: "Expensive Model Warning"
+      cost_warning_body: "⚠️ **Expensive Model Warning**\n\n{cost_warning}\n\n_Text fallback: reply `{prefix}approve` to switch or `{prefix}cancel` to keep the current model._"
+      skew_guard: "This gateway is running code from {boot_rev} but the checkout on disk is now {disk_rev}. Switching models would risk a stale-module crash — ask whoever administers this machine to restart the gateway so it loads the new code."
+      picker:
+        header: "Model Configuration"
+        current_model: "Current model"
+        provider: "Provider"
+        select_provider: "Select a provider:"
+        select_model: "Select a model:"
+        provider_family: "Provider family"
+        more_available: "{count} more available — type `/model <name>` directly"
+        unknown: "unknown"
+        cancelled: "Model selection cancelled."
+        button_prev: "◀ Prev"
+        button_next: "Next ▶"
+        button_back: "◀ Back"
+        button_cancel: "✗ Cancel"
+        button_switch_anyway: "Switch anyway"
+        expired: "Picker expired."
+        expired_use_model: "Picker expired — use /model again."
+        provider_not_found: "Provider not found."
+        group_not_found: "Group not found."
+        invalid_page: "Invalid page."
+        invalid_selection: "Invalid selection."
+        invalid_model_index: "Invalid model index."
+        confirm_expensive: "Confirm expensive model"
+        switched: "Model switched!"
+        switch_failed: "Switch failed."
+        switch_error: "Error switching model: {error}"
+    choice:
+      expired: "Picker expired."
+      expired_run_again: "Picker expired — run the command again."
+      invalid_selection: "Invalid selection."
+      apply_error: "Error applying selection: {error}"
+    memory:
+      unknown_subcommand: "Unknown /memory subcommand. Use: pending, approve <id>, reject <id>, approval <on|off>."
+    write_approval:
+      label_memory: "memory"
+      label_skills: "skills"
+      state_on: "on"
+      state_off: "off"
+      state: "{label}.write_approval = {state}"
+      no_pending: "No pending {label} writes."
+      pending_header: "Pending {label} writes ({count}):"
+      auto_tag: " [auto]"
+      apply_reject_hint: "Apply: /{subsystem} approve <id>   Reject: /{subsystem} reject <id>"
+      diff_hint: "Review full diff: /skills diff <id>"
+      usage_approve_reject: "Usage: /{subsystem} approve|reject <id>  (or 'all')"
+      usage_approve: "Usage: /{subsystem} approve <id>"
+      usage_reject: "Usage: /{subsystem} reject <id>"
+      usage_diff: "Usage: /skills diff <id>"
+      not_found: "No pending {label} write with id '{id}'."
+      approved: "Approved {count} {label} write(s)."
+      failed_header: "Failed:"
+      rejected: "Rejected {count} pending {label} write(s)."
+      rejected_one: "Rejected pending {label} write '{id}'."
+      diff_header: "# Pending skill write {id}: {summary}\n"
+      set_hint: "Set with: /{subsystem} approval <on|off>"
+      invalid_value: "Invalid value '{value}'. Use: on or off."
+      cli_only_hint: "To change the {subsystem} approval gate, run:\n  hermes config set {subsystem}.write_approval {value}"
+      set_failed: "Failed to set {label}.write_approval: {error}"
+      set_ok: "{label}.write_approval set to '{state}'."
+    approvals:
+      admin_only: "Only gateway admins can change the persistent approval mode."
+    sessions:
+      usage_search: "Usage: `/sessions search <query>`"
+      title_matching: "Sessions matching “{query}”"
+      title_all: "Sessions"
+      title_named: "Named Sessions"
+      empty: "No sessions found.\nName this chat with `/title My Session` so it's easier to find later."
+      unnamed_fallback: "Untitled"
+      footer_resume: "Resume: `/resume <session id>` or `/resume <number>` from the list above."
+      footer_more: "More: `/sessions all` for every chat, `/sessions search <query>` to search."
+    agents:
+      between_turns: "between turns"
+      no_progress: "· no progress {seconds}s"
+      quiet: "· quiet {seconds}s"
+      child_label: "  - child {index}: "
+      api_calls_line: "{calls} api calls · {doing}"
+      active_ago: "· active {seconds}s ago"
+    platform:
+      header: "**Gateway platforms**"
+      connected: "Connected: {list}"
+      connected_none: "Connected: (none)"
+      failed_none: "Failed/paused: (none)"
+      paused_reason_default: "paused"
+      paused_row: "  · {platform} — PAUSED ({reason}). Resume with `/platform resume {platform}`."
+      retrying_row: "  · {platform} — retrying (attempt {attempts})"
+      usage_action: "Usage: /platform {action} <name>"
+      unknown: "Unknown platform: {target}"
+      not_in_queue_pause: "{platform} is not in the retry queue (it's either connected or not enabled)."
+      already_paused: "{platform} is already paused."
+      paused_confirm: "✓ {platform} paused. Resume with `/platform resume {platform}` — or ask whoever administers this machine to restart the gateway to reset it."
+      not_in_queue_resume: "{platform} is not in the retry queue — nothing to resume."
+      already_retrying: "{platform} is already retrying — no resume needed."
+      resumed: "✓ {platform} resumed — retrying on next watcher tick."
+      usage: "Usage: /platform <list|pause|resume> [name]\n  /platform list — show platform status\n  /platform pause <name> — stop retrying a failing platform\n  /platform resume <name> — re-queue a paused platform"
+    goal:
+      wait_usage: "Usage: /goal wait <pid> [reason]"
+      wait_invalid_pid: "/goal wait: <pid> must be an integer process id."
+      wait_parked: "⏳ Goal parked on pid {pid}{reason_part}. Loop pauses until it exits."
+      unwait_cleared: "▶ Wait barrier cleared — goal loop resumes."
+      unwait_none: "No wait barrier set."
+      gate_added: "⚿ Gate added: $ {command} ({max_retries} retries, {timeout}s timeout). It must pass before the goal can complete."
+      gate_removed: "✓ Gate removed: $ {removed}"
+      gate_cleared_singular: "✓ Cleared {count} gate."
+      gate_cleared_plural: "✓ Cleared {count} gates."
+      gate_usage: "Usage: /goal gate [list | add <command> | remove <N> | clear]"
+      draft_usage: "Usage: /goal draft <objective in plain language>"
+      completion_contract_label: "Completion contract:"
+      draft_failed_note: "(Couldn't draft a contract — running as a free-form goal.)"
+      status:
+        none: "No active goal. Set one with /goal <text>."
+        meta_turns: "{used}/{total} turns"
+        subgoal_one: "{count} subgoal"
+        subgoal_few: "{count} subgoals"
+        subgoal_many: "{count} subgoals"
+        contract: "contract"
+        gate_one: "{count} gate"
+        gate_few: "{count} gates"
+        gate_many: "{count} gates"
+        default_reason_session: "session {session}"
+        default_reason_pid: "pid {pid}"
+        default_reason_timer: "{remaining}s"
+        parked_on: "⏳ Goal (parked on {reason}, {meta}): {goal}"
+        parked_timer: "⏳ Goal (parked {remaining}s — {reason}, {meta}): {goal}"
+        active: "⊙ Goal (active, {meta}): {goal}"
+        paused: "⏸ Goal (paused, {meta}{extra}): {goal}"
+        paused_extra: " — {reason}"
+        done: "✓ Goal done ({meta}): {goal}"
+        other: "Goal ({status}, {meta}): {goal}"
+    heartbeat:
+      unavailable: "Heartbeats unavailable (no session)."
+      paused: "⏸ Heartbeat paused: {prompt}"
+      none_set: "No heartbeat set."
+      resume_none: "No heartbeat to resume."
+      resumed: "▶ Heartbeat resumed (every {interval}): {prompt}"
+      cleared: "✓ Heartbeat cleared."
+      usage_no_interval: "Usage: /heartbeat every <interval> <prompt>  (e.g. /heartbeat every 10m Check CI)\nAlso: /heartbeat status | pause | resume | clear"
+      interval_too_small: "Interval too small — minimum is {min}s."
+      prompt_required: "Usage: /heartbeat every <interval> <prompt> — the prompt is required."
+      invalid: "Invalid heartbeat: {exc}"
+      set: "♥ Heartbeat set (every {interval}): {prompt}\nFires as a normal turn whenever this session is idle and the interval has elapsed. Works only while the gateway keeps running — ask me to set up a recurring job instead for something durable."
+      status:
+        none: "No heartbeat. Set one with /heartbeat every <interval> <prompt>."
+        fired_one: ", fired {count}×"
+        fired_few: ", fired {count}×"
+        fired_many: ", fired {count}×"
+        active: "♥ Heartbeat (every {every}, next in ~{next_in}s{fired}): {prompt}"
+        paused: "⏸ Heartbeat (paused, every {every}{fired}): {prompt}"
+        other: "Heartbeat ({status}, every {every}{fired}): {prompt}"
+    refine:
+      unavailable: "Refine unavailable (no session)."
+      agent_running: "Agent is running — wait for the turn to finish, then /refine."
+      nothing_yet_send: "Nothing to refine yet — send a message first."
+      nothing_yet_empty: "Nothing to refine yet — the conversation is empty."
+      failed_to_start: "/refine failed to start: {exc}"
+      reviewing: "⚗ Reviewing this conversation in the background{tail} — any memory/skill updates will be reported when done."
+      focus_tail: " (focus: {focus})"
+    subgoal:
+      no_active_goal: "No active goal. Set one with /goal <text>."
+      remove_usage: "Usage: /subgoal remove <n>"
+      remove_invalid: "/subgoal remove: <n> must be an integer (1-based index)."
+      removed: "✓ Removed subgoal {index}: {text}"
+      cleared_singular: "✓ Cleared {count} subgoal."
+      cleared_plural: "✓ Cleared {count} subgoals."
+      none_to_clear: "No subgoals to clear."
+      added: "✓ Added subgoal {index}: {text}"
+    diff:
+      untracked_label: "Untracked:"
+      more_untracked: "\n... and {count} more"
+      truncated_note: "\n... (truncated — {count} lines total; use /diff --stat for a summary)"
+    codex_runtime:
+      config_load_failed: "❌ Could not load config: {exc}"
+    bundles:
+      none: "No skill bundles installed. Ask whoever administers this machine to create one.\nDirectory: `{dir}`"
+      header: "**Skill Bundles** ({count} installed):"
+      entry: "• `/{slug}` — {desc} _({count} skills)_"
+      default_desc: "Load {count} skills"
+      invoke_hint: "Invoke a bundle with `/<slug>` to load all its skills."
+    topup:
+      balance_header: "💳 **Balance**"
+      manage_billing: "Manage billing on the portal: {url}"
+      manage_hint: "Top up and manage billing in the browser — your balance updates here after."
+    skills:
+      approval_off: "Skill write approval is off. Enable it with /skills approval on, then review staged writes here with /skills pending."
+      unknown_subcommand: "Unknown /skills subcommand on this platform. Use: pending, approve <id>, reject <id>, diff <id>, approval <on|off>. (Search and install are only available to whoever administers this machine.)"
+      diff_truncated: "\n… (truncated — ask whoever administers this machine for the full diff)"
+    resume:
+      message_count_one: " ({count} message)"
+      message_count_many: " ({count} messages)"
+    hook:
+      blocked: "Command `/{command}` was blocked."
+    confirm:
+      new_detail: "This starts a fresh session and discards the current conversation history."
+      undo_detail_one: "This removes the last user/assistant exchange from history."
+      undo_detail_many: "This removes the last {n} user turns from history."
+      update_detail: "This updates Trix Agent's code to the latest version and restarts it. If something goes wrong partway through, you cannot undo it yourself -- whoever administers this machine will need to."
+      button_once: "✅ Approve Once"
+      button_always: "🔒 Always Approve"
+      button_cancel: "❌ Cancel"
+      prompt: "⚠️ **Confirm /{command}**\n\n{detail}\n\nChoose:\n• **{once_label}** — proceed this time only\n• **{always_label}** — proceed and silence this prompt permanently\n• **{cancel_label}** — keep current conversation\n\n_Text fallback: reply `{approve_cmd}`, `{always_cmd}`, or `{cancel_cmd}`._"
+      prompt_no_always: "⚠️ **Confirm /{command}**\n\n{detail}\n\nChoose:\n• **{once_label}** — proceed this time only\n• **{cancel_label}** — cancel, nothing changes\n\n_Text fallback: reply `{approve_cmd}` or `{cancel_cmd}`._"
+      cancelled: "🟡 /{command} cancelled. Conversation unchanged."
+      always_saved: "\n\nℹ️ Future /new, /reset, and /undo will run without confirmation. Ask whoever administers this machine to turn confirmations back on if you want them again."
+      always_not_saved: "\n\n⚠️ Could not save that preference, so /new, /reset, and /undo will ask again next time. Ask whoever administers this machine if you'd like that turned off permanently."
+    learn:
+      ack_described: "Learning a skill from what you described…"
+      ack_conversation: "Learning a skill from this conversation…"
+      start_failed: "Could not start /learn — please try again."
+    init:
+      ack_update: "Updating AGENTS.md from a project scan…"
+      ack_generate: "Generating AGENTS.md from a project scan…"
+      start_failed: "Could not start /init — please try again."
+    moa:
+      prepare_failed: "Failed to prepare MoA turn."
+    quick:
+      no_output: "Command returned no output."
+      timeout: "Quick command timed out (30s)."
+      error: "Quick command error: {error}"
+      no_command: "Quick command '/{command}' has no command defined."
+      no_target: "Quick command '/{command}' has no target defined."
+      unsupported_type: "Quick command '/{command}' has unsupported type (supported: 'exec', 'alias')."
+    skill:
+      disabled_for_platform: "The **{skill_name}** skill is disabled for {platform}.\nAsk whoever administers this machine to enable it."
+      stacked_disabled_for_platform: "The **{skills}** skill(s) in this stacked invocation are disabled for {platform}.\nAsk whoever administers this machine to enable them."
+      stacked_load_failed: "Failed to load stacked skills for /{command}."
+      installed_disabled: "The **{command_name}** skill is installed but disabled.\nAsk whoever administers this machine to enable it."
+      not_installed: "The **{command_name}** skill is available but not installed.\nAsk whoever administers this machine to install it."
+    disabled:
+      replace: "That command isn't available here. Use {replacement} instead."
+      words: "There's no dedicated command for that — just ask in plain language, and it'll get done as part of the conversation."
+      none: "That isn't something this bot can do."
+      fallback: "That isn't something this bot can do."
+    unknown: "Unknown command `/{command}`. Type /commands to see what's available, or resend without the leading slash to send as a regular message."
+    home_channel:
+      not_set: "📬 No home channel is set for {platform}. A home channel is where the agent delivers cron job results and cross-platform messages.\n\nType {sethome_cmd} to make this chat your home channel, or ignore to skip."
+  topic:
+    root_lobby: "This main chat is reserved for system commands.\n\nTo start a new chat, open the All Messages topic at the top of this bot interface and send any message there. Telegram will create a new topic for that message; each topic works as an independent session."
+    root_new: "To start a new parallel chat, open the All Messages topic at the top of this bot interface and send any message there. Telegram will create a new topic for it.\n\nEach topic is an independent session. Use /new inside an existing topic only if you want to replace that topic's current session."
+    new_header: "Started a new session in this topic.\n\nTip: for parallel work, open All Messages and send a message there to create a separate topic instead of using /new here. /new replaces the session attached to the current topic."
+    system_title: "System"
+    system_intro: "System topic for commands and status."
+    title_fallback: "Chat"
+    help_text: "/topic — enable multi-session DM mode (one bot, many parallel chats)\n\nUsage:\n  /topic             Enable topic mode, or show status if already on\n  /topic help        Show this message\n  /topic off         Disable topic mode and clear topic bindings\n  /topic <id>        Inside a topic: restore a previous session by ID\n\nHow it works:\n1. Run /topic once in this DM — the agent checks BotFather Threads\n   Settings are enabled and flips on multi-session mode.\n2. Tap All Messages at the top of the bot and send any message.\n   Telegram creates a new topic for that message; each topic is\n   an independent session (fresh history, fresh context).\n3. The root DM becomes a system lobby — send /topic, /status,\n   /help, /usage there. Normal prompts go in a topic.\n4. /new inside a topic resets just that topic's session.\n5. /topic <id> inside a topic restores an old session into it."
+    chat_id_unresolved: "Could not determine chat ID."
+    mode_not_enabled: "Multi-session topic mode is not currently enabled for this chat."
+    disable_failed: "Failed to disable topic mode: {error}"
+    mode_disabled: "Multi-session topic mode is now OFF for this chat.\n\nExisting topics in Telegram aren't removed — they'll just stop being gated as independent sessions. The root DM works as a normal chat again. Run /topic to re-enable later."
+    status_enabled: "Telegram multi-session topics are enabled."
+    status_create_hint: "To create a new chat, open All Messages at the top of this bot interface and send any message there. Telegram will create a new topic for it."
+    status_unlinked_header: "Previous unlinked sessions:"
+    status_untitled: "Untitled session"
+    status_restore_header: "To restore one:"
+    status_step_create: "1. Create or open a topic. To create a new one, open All Messages and send any message there."
+    status_step_send: "2. Send /topic <session-id> inside that topic."
+    status_example: "Example: Send /topic {session_id} inside a topic."
+    status_none_found: "No previous unlinked Telegram sessions found."
+    status_restore_later_header: "To restore a previous session later:"
+    session_not_found: "Session not found: {session_id}"
+    not_telegram_session: "That session is not a Telegram session and cannot be restored into this topic."
+    session_not_owned: "That session does not belong to this Telegram user."
+    session_already_linked: "That session is already linked to another Telegram topic."
+    session_restored: "Session restored: {title}"
+    last_message_prefix: "\n\nLast message:\n{message}"
+  update:
+    button_yes: "✓ Yes"
+    button_no: "✗ No"
+    # Response to tapping Yes/No on the mid-update prompt (`update_prompt:`)
+    # -- spec 12 translated the buttons, spec 16 (Task 4) translates what
+    # happens after the tap. "not_authorized" below has its own key
+    # (spec 16 review, Task G3): the earlier reuse of
+    # trix.approval.confirm_unauthorized silently dropped the
+    # update-specific "update prompts" wording for the generic "this
+    # prompt" -- same idea, less accurate for this window.
+    not_authorized: "⛔ You are not authorized to answer update prompts."
+    answer_sent_tooltip: "Sent '{label}' to the update process."
+    answer_recorded: "⚕ Update prompt answered: *{label}*"
+    finished: "✅ Update finished."
+    failed_with_code: "❌ Update failed (exit code {exit_code})."
+    default_hint: " (default: {value})"
+    needs_input: "⚕ **Update needs your input:**\n\n{prompt_text}{default_hint}\n\nReply `{approve_cmd}` (yes) or `{deny_cmd}` (no), or type your answer directly."
+    # Header-only variant of needs_input, for the button window
+    # (send_update_prompt): the buttons already stand right below the
+    # prompt, so the "reply /approve or /deny" tail from needs_input
+    # would contradict them. Same phrase minus that tail.
+    needs_input_header: "Update needs your input:"
+    timeout: "❌ Update timed out after 30 minutes."
+    finished_with_output: "✅ Update finished.\n\n```\n{output}\n```"
+    failed_with_output: "❌ Update failed.\n\n```\n{output}\n```"
+    finished_success: "✅ Update finished successfully."
+    failed_generic: "❌ Update failed. Ask whoever administers this machine to check it."
+    managed_nixos: "Cannot {action}: this installation is managed by NixOS. Ask whoever administers it to apply the update through the system configuration."
+    managed_generic: "Cannot {action}: this installation is managed by {managed_system}. Ask whoever administers it to upgrade or reinstall it."
+  background:
+    process_finished: "[Background process {session_id} finished with exit code {exit_code}. Here's the final output:\n{output}]"
+    process_running: "[Background process {session_id} is still running. New output:\n{output}]"
+  estop:
+    paused_with_reason: "⏸️ Paused ({reason}). New work is on hold; it'll resume automatically once the pause is lifted."
+    paused: "⏸️ Paused. New work is on hold; it'll resume automatically once the pause is lifted."
+  session_limit:
+    held_by: " Held by: {held}."
+    message: "The agent is at the active session limit ({active_count}/{max_sessions}).{detail} Try again when another session finishes."
+  model_cost:
+    banner: "!!! EXPENSIVE MODEL WARNING !!!"
+    above_threshold: "{model} has known pricing above the safety threshold."
+    input_tokens: "Input tokens: {value}"
+    output_tokens: "Output tokens: {value}"
+    threshold: "Threshold: more than $20/M input tokens or more than $100/M output tokens."
+    pricing_source: "Pricing source: {source}."
+    gpt55_suggestion: "did you mean to select openai/gpt-5.5?"
+    confirm_hint: "Confirm only if you intend to use this model."
+    unknown: "unknown"
+  handoff:
+    thread_name: "Session — {cli_title}"
+  discord:
+    default_thread_title: "New chat"
