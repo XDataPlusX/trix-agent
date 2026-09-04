@@ -759,6 +759,89 @@ def test_reset_tool_cache_called_twice_when_install_stage_runs(logged_in, monkey
     assert len(calls) == 2
 
 
+# ---------------------------------------------------------------------------
+# Regression, 2026-09-04 field report ("список «что доустановить» считается
+# ПОСЛЕ того, как настройки уже записаны"): every test above fakes
+# ``wizard_tool_blocks`` with an explicit ``installed`` flag, so none of them
+# ever exercise the REAL interaction between ``apply_settings()`` (which
+# writes config.yaml/.env for THIS submission) and
+# ``tools_config.provider_readiness_status()`` (which _pending_tool_installs
+# reads the "installed" verdict from). That interaction is exactly where the
+# bug lived: a value ``apply_settings()`` just wrote — ``browser.backend`` /
+# ``CAMOFOX_URL`` — made the very next readiness read think the row was
+# already installed, before its post_setup hook ever ran once. Both tests
+# below run the REAL ``apply_settings`` and the REAL ``wizard_tool_blocks``
+# (only the login/liveness probes and the install hook itself are stubbed,
+# so no subprocess actually runs) against an isolated HERMES_HOME
+# (``logged_in``'s own ``tmp_path``).
+
+
+def _real_apply_and_catalog_stack(monkeypatch, wapp):
+    """Same login/restart/liveness stubs ``_ok_stack`` uses, but leaves
+    ``apply_settings`` and ``wizard_tool_blocks`` real — see the module
+    comment above for why that distinction is the whole point here."""
+    monkeypatch.setattr(wapp, "check_telegram_token", lambda *a: {"ok": True, "username": "trixbot"})
+    monkeypatch.setattr(wapp, "check_provider_key", lambda *a: {"ok": True})
+    monkeypatch.setattr(wapp, "restart_gateway", lambda: {"ok": True, "message": ""})
+    monkeypatch.setattr(wapp, "wait_bot_alive", lambda *a, **k: {"ok": True, "username": "trixbot"})
+
+
+def test_browser_use_first_pick_queues_the_cli_install(logged_in, monkeypatch):
+    """Defect 1: ``_POST_SETUP_READY`` had no ``browser_use_cli`` entry, so
+    the row fell into ``provider_readiness_status``'s ``is_active`` fallback
+    — which reads ``config.browser.backend``, a value ``apply_settings()``
+    had *just* written to "browser-use" for this very submission. A
+    first-time pick therefore read as already-installed and
+    ``uv tool install browser-use`` never ran (two-machine field report:
+    empty ``tool_install_failures`` but no CLI on disk). Pin ``shutil.which``
+    to "absent" so the assertion holds regardless of whether this test
+    machine happens to have the CLI on PATH."""
+    from hermes_cli.setup_wizard import app as wapp
+
+    _real_apply_and_catalog_stack(monkeypatch, wapp)
+    monkeypatch.setattr("shutil.which", lambda name: None)
+    calls = []
+    monkeypatch.setattr(
+        wapp, "run_tool_install", lambda key: calls.append(key) or {"ok": True, "message": "Установлено."}
+    )
+
+    form = dict(GOOD_FORM)
+    form["browser_backend"] = "browser-use"
+
+    r = logged_in.post("/api/submit", json=form)
+
+    assert r.json()["ok"] is True, r.json()
+    assert "browser_use_cli" in calls
+
+
+def test_camofox_first_pick_queues_the_npm_install(logged_in, monkeypatch):
+    """Defect 2: Camofox's row carries BOTH ``env_vars`` (CAMOFOX_URL) and a
+    ``post_setup`` install hook with a real predicate (``_camofox_installed``
+    — checks node_modules). ``provider_readiness_status`` used to return
+    "ready" the moment ``env_vars`` were satisfied, never reaching that
+    predicate at all — so once ``apply_settings()`` wrote CAMOFOX_URL for
+    THIS submission, the row read as ready before the npm package was ever
+    installed. Pin ``_camofox_installed`` to False so the assertion holds
+    regardless of this checkout's own node_modules state."""
+    import hermes_cli.tools_config as tc
+    from hermes_cli.setup_wizard import app as wapp
+
+    _real_apply_and_catalog_stack(monkeypatch, wapp)
+    monkeypatch.setattr(tc, "_camofox_installed", lambda: False)
+    calls = []
+    monkeypatch.setattr(
+        wapp, "run_tool_install", lambda key: calls.append(key) or {"ok": True, "message": "Установлено."}
+    )
+
+    form = dict(GOOD_FORM)
+    form["camofox_url"] = "http://localhost:9377"
+
+    r = logged_in.post("/api/submit", json=form)
+
+    assert r.json()["ok"] is True, r.json()
+    assert "camofox" in calls
+
+
 def test_apply_failure_reports_stage_apply_and_skips_restart(logged_in, monkeypatch):
     from hermes_cli.setup_wizard import app as wapp
 
