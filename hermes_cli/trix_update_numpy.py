@@ -50,10 +50,10 @@ def numpy_report_lines(result) -> list[str]:
     """
     if result is None:
         return []
-    if not getattr(result, "attempted_install", False):
+    if not getattr(result, "repaired", False):
         # Ничего не делали: numpy либо не установлен, либо и так работает.
         return []
-    if getattr(result, "importable", False):
+    if getattr(result, "ok", False):
         return [
             "  ⚠ Обновление вернуло версию numpy, несовместимую с процессором "
             "этой машины — заменено на рабочую.",

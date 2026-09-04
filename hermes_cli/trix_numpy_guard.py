@@ -42,18 +42,40 @@ class NumpyGuardResult:
     message: str
 
 
+# Проверка здоровья numpy. Голого `import numpy` НЕ достаточно.
+#
+# Снято на живой машине 2026-09-05: после `uv pip install -e .[all]`
+# поверх откаченного numpy на диске остался каталог-обманка — `import
+# numpy` проходит, `numpy.__version__` отсутствует, `pip list` numpy не
+# показывает вовсе. Сторож считал такую машину здоровой и не чинил её,
+# а faster-whisper на ней, разумеется, не работал.
+#
+# Поэтому спрашиваем то, что нужно вызывающему: версию (её нет у пустого
+# каталога-пакета) и одно арифметическое действие (оно поднимает
+# скомпилированное ядро — ровно то, что не запускается на процессоре без
+# x86-64-v2).
+_HEALTH_PROBE = (
+    "import numpy, sys;"
+    " v = numpy.__version__;"
+    " sys.exit(0 if (v and float(numpy.zeros(3).sum()) == 0.0) else 1)"
+)
+
+
 def _numpy_imports(python: str | None = None) -> bool:
-    """Импортируется ли numpy в целевом интерпретаторе.
+    """Пригоден ли numpy к работе в целевом интерпретаторе.
 
     Отдельным процессом, а не `import numpy` здесь: сломанный numpy
     падает `RuntimeError` при импорте, и повторить попытку в том же
     процессе после починки уже нельзя — модуль остаётся в кэше
     полуимпортированным.
+
+    Имя историческое; проверяется не сам факт импорта, а работоспособ-
+    ность — см. ``_HEALTH_PROBE``.
     """
     exe = python or sys.executable
     try:
         result = subprocess.run(
-            [exe, "-c", "import numpy"],
+            [exe, "-c", _HEALTH_PROBE],
             capture_output=True, text=True,
             encoding="utf-8", errors="replace", timeout=120,
         )
