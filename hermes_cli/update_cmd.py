@@ -824,7 +824,17 @@ def _commit_staged_replacements(staged) -> None:
 def _print_update_completion(message: str) -> None:
     """Print an update outcome plus, when the dashboard launched this run
     with an action id, a terminal receipt line the Desktop can match after
-    the dashboard restarts (see #47359 / #58764)."""
+    the dashboard restarts (see #47359 / #58764).
+
+    Перед объявлением успеха проверяется, переживло ли обновление
+    распознавание речи: на процессорах ниже ``x86-64-v2`` пересборка
+    зависимостей возвращает numpy 2.x поверх подобранного рецептом 1.x,
+    и голос умирает молча (см. ``trix_update_numpy``). На нормальной
+    машине это стоит одного импорта и ничего не печатает.
+    """
+    from hermes_cli.trix_update_numpy import repair_numpy_after_update
+
+    repair_numpy_after_update()
     print(message)
     action_id = os.environ.get("HERMES_ACTION_ID", "")
     if len(action_id) == 32 and all(char in "0123456789abcdef" for char in action_id):
