@@ -140,9 +140,10 @@ def test_a_real_numpy_passes_the_health_probe():
 def test_a_gutted_numpy_directory_fails_the_health_probe(tmp_path):
     """Каталог-обманка обязан читаться как «сломан», а не как «здоров».
 
-    Ровно это нашлось на живой машине: `import numpy` проходил,
-    `numpy.__version__` отсутствовал, `pip list` numpy не показывал. Голый
-    импорт объявлял такую машину здоровой, и сторож её не чинил.
+    Ровно это нашлось на живой машине, когда установщик не смог дочистить
+    старый каталог пакета: `import numpy` проходил, `numpy.__version__`
+    отсутствовал, `pip list` numpy не показывал. Голый импорт объявлял
+    такую машину здоровой, и сторож её не чинил.
     """
     (tmp_path / "numpy").mkdir()
     (tmp_path / "numpy" / "__init__.py").write_text("", encoding="utf-8")
