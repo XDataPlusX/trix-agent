@@ -1644,6 +1644,39 @@ def _run_cua_driver_installer(
 
 def _run_post_setup(post_setup_key: str):
     """Run post-setup hooks for tools that need extra installation steps."""
+    try:
+        return _run_post_setup_impl(post_setup_key)
+    finally:
+        # numpy восстанавливаем ПОСЛЕ любого шага, а не один раз при
+        # создании машины.
+        #
+        # На процессоре ниже x86-64-v2 (дефолт нашего хостера) колёса
+        # numpy 2.x не импортируются вовсе, и рецепт при создании машины
+        # ставит работающую ветку 1.x. Но любой ПОЗДНИЙ шаг, тянущий
+        # пакет с зависимостью от numpy, возвращает 2.x обратно — и молча
+        # ломает всё, что за numpy стоит: распознавание речи и локальные
+        # голоса.
+        #
+        # Снято на живой машине 2026-09-05: клиент выбрал KittenTTS —
+        # заработало; следом выбрал Piper — установка Piper подтянула
+        # numpy 2.x, и озвучка отвалилась с той же ошибкой baseline.
+        # Разовой починки здесь не хватает по построению, нужна
+        # восстанавливающаяся.
+        #
+        # На нормальном процессоре это стоит одного импорта numpy и
+        # ничего не делает.
+        try:
+            from hermes_cli.trix_numpy_guard import ensure_runnable_numpy
+
+            guard = ensure_runnable_numpy()
+            if guard.repaired:
+                _print_warning(f"    {guard.message}")
+        except Exception:
+            pass
+
+
+def _run_post_setup_impl(post_setup_key: str):
+    """Тело установочных хуков. Обёртка выше восстанавливает numpy."""
     import shutil
     from hermes_constants import find_node_executable
 
@@ -1800,17 +1833,40 @@ def _run_post_setup(post_setup_key: str):
         elif _npm_bin:
             _print_info("    Installing Camofox browser server...")
             import subprocess
-            # Absolute npm path so .cmd shim executes on Windows.
+            # ИМЯ ПАКЕТА обязательно. Раньше здесь стоял голый
+            # `npm install --workspaces=false`, то есть «поставь
+            # объявленные зависимости репозитория» — а
+            # `@askjo/camofox-browser` в `package.json` не объявлен и
+            # никогда не был. Команда честно возвращала ноль, хук печатал
+            # «Camofox installed», и Camofox не появлялся.
+            #
+            # Это худший вид отказа: `tool_install_failures` пуст, мастер
+            # рапортует успех, клиент выбирает Camofox и получает браузер,
+            # которого нет. Снято с клиентской машины 2026-09-04 —
+            # установочный хук отработал, `node_modules/@askjo` не
+            # появился.
+            #
+            # Версия та же, что у `ensure_browser` в scripts/install.sh:
+            # один пакет — один пин, иначе два пути установки разъедутся.
             result = subprocess.run(
                 # --workspaces=false avoids resolving apps/desktop. See #38772.
-                [_npm_bin, "install", "--silent", "--workspaces=false"],
+                [_npm_bin, "install", "--silent", "--workspaces=false",
+                 "@askjo/camofox-browser@^1.5.2"],
                 capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=str(PROJECT_ROOT),
                 creationflags=_post_setup_no_window_flags(),
             )
-            if result.returncode == 0:
+            # Проверяем ФАКТ, а не код возврата. Прежний код доверял коду
+            # возврата команды, которая не могла провалиться, и потому
+            # рапортовал успех всегда. Тот же урок, что с пакетами apt в
+            # рецепте: спрашивать надо у диска, а не у команды.
+            if result.returncode == 0 and camofox_dir.exists():
                 _print_success("    Camofox installed")
             else:
-                _print_warning("    npm install failed - run manually: npm install --workspaces=false")
+                detail = (result.stderr or result.stdout or "").strip().splitlines()
+                if detail:
+                    _print_warning(f"    npm: {detail[-1][:160]}")
+                _print_warning("    Не удалось поставить Camofox — запустите вручную:")
+                _print_warning("    npm install --workspaces=false @askjo/camofox-browser")
         if camofox_dir.exists():
             # Раньше здесь печаталась инструкция «запустите
             # npx @askjo/camofox-browser». Она адресована человеку с
@@ -3348,8 +3404,33 @@ def _browser_use_cli_installed() -> bool:
     made a first-time pick of "Browser Use" read as already-installed and
     skipped ``uv tool install browser-use`` outright (2026-09-04 field
     reports on two machines: empty ``tool_install_failures`` but no CLI on
-    disk)."""
-    return shutil.which("browser-use") is not None
+    disk).
+
+    **Спрашиваем тем же резолвером, каким продукт этот CLI ИЩЕТ**, а не
+    через PATH. Установка кладёт бинарь в ``$HERMES_HOME/bin`` —
+    сознательно, чтобы не зависеть от PATH пользователя, — и ровно поэтому
+    ``shutil.which`` его там не находит: у службы мастера PATH системный
+    (``/usr/local/bin:/usr/bin:...``) и каталога Hermes в нём нет.
+
+    Первая редакция этого предиката спрашивала PATH и получала обратный
+    дефект: хук отрабатывал успешно («already installed»), а проверка
+    после него отвечала «не установлено», и мастер показывал клиенту
+    «Установка не удалась» на успешно установленном инструменте. Снято с
+    живой машины 2026-09-04: `shutil.which` -> None, `_find_cli()` ->
+    ['/home/user/.hermes/bin/browser-use'].
+
+    Правило, которое отсюда следует: **проверять наличие надо тем же
+    способом, каким продукт этой вещью пользуется.** Иначе проверка и
+    рантайм расходятся, и расходятся молча.
+    """
+    if shutil.which("browser-use"):
+        return True
+    try:
+        from tools.browser_use_cli import _find_cli
+
+        return bool(_find_cli())
+    except Exception:
+        return False
 
 
 # post_setup_key -> predicate(): True when the install side-effect is already

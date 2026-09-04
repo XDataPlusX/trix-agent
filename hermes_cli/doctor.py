@@ -2116,6 +2116,9 @@ def run_doctor(args):
     _check_s6_supervision(issues)
     from hermes_cli.trix_setup_service_check import check_trix_setup_service
     check_trix_setup_service(issues)
+    from hermes_cli.trix_numpy_check import check_numpy_runnable
+    if check_numpy_runnable(issues, should_fix=should_fix):
+        fixed_count += 1
     _report_telegram_link_health()
 
     if sys.platform != "win32":
