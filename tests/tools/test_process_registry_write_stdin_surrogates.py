@@ -30,9 +30,32 @@ def test_write_stdin_pty_surrogateescape_roundtrip(tmp_path):
             session.id, b"\xff".decode("utf-8", "surrogateescape") + "\n"
         )
         assert result["status"] == "ok", result
-        deadline = time.monotonic() + 10
-        while time.monotonic() < deadline and not out.exists():
+        # Ждём СОДЕРЖИМОЕ, а не существование файла, и ждём щедро.
+        #
+        # Два изъяна прежней редакции, оба видны только под нагрузкой (тест
+        # покраснел в полном параллельном прогоне и прошёл в одиночку):
+        #
+        # 1. `out.exists()` становится истинным в момент ОТКРЫТИЯ файла на
+        #    запись, то есть до того, как в него что-то попало. Между
+        #    открытием и записью проверка могла прочитать пустоту и
+        #    сравнить её с ожидаемым — гонка, а не проверка.
+        # 2. Десять секунд на запуск процесса в PTY при двадцати рабочих
+        #    процессах раннера — не запас, а лотерея.
+        #
+        # Ждём ровно того, что проверяем: пока прочитанное не совпадёт с
+        # ожидаемым. Тогда успех наступает сразу, а потолок нужен только
+        # чтобы не висеть вечно при настоящей поломке.
+        expected = b"\xff\n"
+        deadline = time.monotonic() + 60
+        actual = b""
+        while time.monotonic() < deadline:
+            try:
+                actual = out.read_bytes()
+            except OSError:
+                actual = b""
+            if actual == expected:
+                break
             time.sleep(0.05)
-        assert out.read_bytes() == b"\xff\n"
+        assert actual == expected
     finally:
         registry.kill_process(session.id)

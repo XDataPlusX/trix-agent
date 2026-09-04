@@ -5646,7 +5646,7 @@ def _run_npm_watching_for_engine_failure(
     cwd: Path,
     env: dict[str, str],
     capture_output: bool,
-    timeout: float | None = _NPM_STEP_TIMEOUT_SECONDS,
+    timeout: float | None = -1,
 ) -> subprocess.CompletedProcess:
     """Run *cmd*, always retaining stderr so ``EBADENGINE`` stays detectable.
 
@@ -5661,6 +5661,14 @@ def _run_npm_watching_for_engine_failure(
     EBADENGINE), а исключение отсюда прервало бы обновление целиком —
     хотя код к этому моменту уже обновлён и работоспособен.
     """
+    # Умолчание разрешается ЗДЕСЬ, а не в сигнатуре: значение по умолчанию
+    # связывается при определении функции, и подменить его в проверке было
+    # бы нечем — тест мог бы убедиться только в том, что механизм работает,
+    # когда потолок передан явно, но не в том, что он применяется сам.
+    # `-1` как «не передавали»: `None` занят и означает «без потолка».
+    if timeout == -1:
+        timeout = _NPM_STEP_TIMEOUT_SECONDS
+
     if capture_output:
         try:
             return subprocess.run(
@@ -5679,9 +5687,21 @@ def _run_npm_watching_for_engine_failure(
                 cmd, 124, exc.stdout or "", _npm_timeout_message(timeout, exc.stderr)
             )
 
+    # Чтение stderr — в ОТДЕЛЬНОМ потоке, и это не украшение.
+    #
+    # Первая редакция этой правки читала `for line in proc.stderr` прямо
+    # здесь, а потолок ставила на `proc.wait()` ниже. Толку от такого
+    # потолка ноль: зависший npm ничего не пишет и не завершается, цикл
+    # чтения блокируется навсегда, и до `wait()` управление не доходит
+    # вовсе. Поймано собственным тестом на зависание — он повис.
+    #
+    # Поток-читатель помечен daemon: если он всё-таки застрянет на
+    # неразрывном чтении, процесс не останется жить из-за него.
+    import threading
+
     captured: list[str] = []
     timed_out = False
-    with subprocess.Popen(
+    proc = subprocess.Popen(
         cmd,
         cwd=cwd,
         env=env,
@@ -5689,27 +5709,37 @@ def _run_npm_watching_for_engine_failure(
         text=True,
         encoding="utf-8",
         errors="replace",
-    ) as proc:
-        if proc.stderr is not None:
-            for line in proc.stderr:
-                captured.append(line)
-                sys.stderr.write(line)
+    )
+
+    def _drain() -> None:
+        if proc.stderr is None:
+            return
+        for line in proc.stderr:
+            captured.append(line)
+            sys.stderr.write(line)
             sys.stderr.flush()
+
+    reader = threading.Thread(target=_drain, name="npm-stderr", daemon=True)
+    reader.start()
+    try:
+        returncode = proc.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        timed_out = True
+        proc.kill()
         try:
-            returncode = proc.wait(timeout=timeout)
-        except subprocess.TimeoutExpired:
-            # Убиваем группу, а не только npm: он порождает дочерние
-            # процессы загрузки, и осиротевший потомок продолжил бы
-            # держать сеть и файлы уже после того, как обновление ушло
-            # дальше.
-            timed_out = True
-            proc.kill()
-            try:
-                proc.wait(timeout=30)
-            except Exception:
-                pass
+            returncode = proc.wait(timeout=30)
+        except Exception:
             returncode = 124
+        if returncode == 0:
+            returncode = 124
+    reader.join(timeout=5)
+    try:
+        if proc.stderr is not None:
+            proc.stderr.close()
+    except Exception:
+        pass
     if timed_out:
+        returncode = 124
         captured.append(_npm_timeout_message(timeout, None))
         sys.stderr.write(captured[-1])
     return subprocess.CompletedProcess(cmd, returncode, None, "".join(captured))
