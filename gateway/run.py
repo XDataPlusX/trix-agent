@@ -22439,6 +22439,27 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                             ),
                             metadata=_non_conversational_metadata(metadata, platform=platform),
                         )
+                    elif exit_code == 2:
+                        # Частичный успех: код и Python-зависимости обновлены
+                        # и работоспособны, не обновились Node-зависимости
+                        # (дашборд и терминальный интерфейс, которых у
+                        # клиента и так нет). Ни зелёная галочка, ни красный
+                        # отказ тут не годятся: первая скрыла бы правду,
+                        # второй объявил бы сломанным исправный продукт.
+                        await adapter.send(
+                            chat_id,
+                            t(
+                                "trix.update.partial",
+                                default=(
+                                    "⚠️ Обновление применено частично: сам агент "
+                                    "обновлён и работает, но часть вспомогательных "
+                                    "компонентов обновить не удалось. Ничего делать "
+                                    "не нужно — они подтянутся при следующем "
+                                    "обновлении."
+                                ),
+                            ),
+                            metadata=_non_conversational_metadata(metadata, platform=platform),
+                        )
                     else:
                         await adapter.send(
                             chat_id,
@@ -22556,24 +22577,42 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
         # Timeout
         if not exit_code_path.exists():
             logger.warning("Update watcher timed out after %.0fs", timeout)
-            exit_code_path.write_text("124", encoding="utf-8")
             await _flush_buffer()
+            # НЕ пишем сюда код 124 и НЕ удаляем маркеры: обновление в этот
+            # момент, скорее всего, ЖИВО.
+            #
+            # Прежняя редакция делала и то и другое. Следствие снято с
+            # клиентской машины 2026-09-05: шаг `npm ci` завис на одной
+            # загрузке (997 секунд на один пакет — чёрная дыра TCP к
+            # одному адресу CDN), наблюдатель дожил до своего получаса,
+            # написал клиенту «прервано по тайм-ауту», стёр маркеры — а
+            # обновление продолжало идти, дошло до конца и записало «0» в
+            # файл, который уже никто не читал. Клиент получил ложное
+            # сообщение об отказе и следом необъяснимый перезапуск шлюза.
+            #
+            # Стирание маркеров вредно вдвойне: по ним новый процесс шлюза
+            # при старте досылает клиенту настоящий итог (см. проверку
+            # маркеров в инициализации). Стерев их, мы отнимаем у продукта
+            # единственную возможность потом сказать правду.
+            #
+            # Поэтому наблюдатель просто ПЕРЕСТАЁТ ЖДАТЬ и честно говорит,
+            # что не дождался, — а не выдаёт своё нетерпение за отказ
+            # обновления.
             try:
                 await adapter.send(
                     chat_id,
                     t(
                         "trix.update.timeout",
-                        # де-брендировано: апстрим говорил "Hermes update timed out"
-                        default="❌ Update timed out after 30 minutes.",
+                        default=(
+                            "⏳ Обновление идёт дольше обычного — я перестал "
+                            "показывать ход, но оно НЕ прервано и продолжается. "
+                            "Итог придёт сюда же, когда оно закончится."
+                        ),
                     ),
                     metadata=_non_conversational_metadata(metadata, platform=platform),
                 )
             except Exception:
                 pass
-            for p in (pending_path, claimed_path, output_path,
-                      exit_code_path, prompt_path):
-                p.unlink(missing_ok=True)
-            (_hermes_home / ".update_response").unlink(missing_ok=True)
             _up_timeout_state = self._peek_session_state(session_key)
             if _up_timeout_state is not None:
                 _up_timeout_state.persistent.update_prompt_pending = False

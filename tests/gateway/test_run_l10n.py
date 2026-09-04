@@ -517,7 +517,11 @@ class TestWatchUpdateProgressTimeout:
         monkeypatch.setattr(gateway_run, "_hermes_home", hermes_home)
         await runner._watch_update_progress(poll_interval=0.01, stream_interval=0.01, timeout=0.03)
         sent = mock_adapter.send.call_args_list[-1].args[1]
-        assert sent == "❌ Update timed out after 30 minutes."
+        # Сообщение больше не объявляет отказ: наблюдатель перестаёт ждать,
+        # а обновление в этот момент, как правило, ЖИВО (см. ветку тайм-аута
+        # в _watch_update_progress). Проверяем смысл, а не дословный текст.
+        assert "NOT been cancelled" in sent
+        assert "still running" in sent
 
     @pytest.mark.asyncio
     async def test_timeout_ru(self, monkeypatch, tmp_path):
@@ -534,7 +538,8 @@ class TestWatchUpdateProgressTimeout:
         monkeypatch.setattr(gateway_run, "_hermes_home", hermes_home)
         await runner._watch_update_progress(poll_interval=0.01, stream_interval=0.01, timeout=0.03)
         sent = mock_adapter.send.call_args_list[-1].args[1]
-        assert sent == "❌ Обновление прервано по тайм-ауту (30 минут)."
+        assert "НЕ прервано" in sent
+        assert "продолжается" in sent
 
 
 class TestWatchUpdateProgressNeedsInput:
@@ -1344,3 +1349,64 @@ class TestHomeChannelNotice:
         assert "Для Telegram не задан домашний канал" in out
         assert "/sethome" in out
         assert "Hermes" not in out
+
+
+class TestWatchUpdateTimeoutKeepsTheMarkers:
+    """Тайм-аут наблюдателя не имеет права выдавать себя за отказ обновления.
+
+    Снято с клиентской машины 2026-09-05: шаг `npm ci` завис на одной
+    загрузке, наблюдатель дожил до своего получаса, написал клиенту
+    «прервано по тайм-ауту», СТЁР маркеры — а обновление продолжало идти,
+    дошло до конца и записало код успеха в файл, который уже никто не
+    читал. Клиент получил ложное сообщение об отказе и следом
+    необъяснимый перезапуск шлюза.
+
+    Маркеры вредно стирать вдвойне: по ним новый процесс шлюза при старте
+    досылает клиенту настоящий итог. Стерев их, продукт лишается
+    единственной возможности потом сказать правду.
+    """
+
+    @pytest.mark.asyncio
+    async def test_timeout_does_not_write_a_failure_code(self, monkeypatch, tmp_path):
+        _set_lang(monkeypatch, "ru")
+        runner = _make_update_runner()
+        hermes_home = tmp_path / "hermes"
+        hermes_home.mkdir()
+        (hermes_home / ".update_pending.json").write_text(json.dumps({
+            "platform": "telegram", "chat_id": "67890", "user_id": "12345",
+        }))
+        runner.adapters = {Platform.TELEGRAM: AsyncMock()}
+        import gateway.run as gateway_run
+        monkeypatch.setattr(gateway_run, "_hermes_home", hermes_home)
+
+        await runner._watch_update_progress(
+            poll_interval=0.01, stream_interval=0.01, timeout=0.03
+        )
+
+        assert not (hermes_home / ".update_exit_code").exists(), (
+            "наблюдатель записал исход за обновление, которое ещё идёт"
+        )
+
+    @pytest.mark.asyncio
+    async def test_timeout_keeps_the_pending_marker_for_the_next_gateway(
+        self, monkeypatch, tmp_path
+    ):
+        _set_lang(monkeypatch, "ru")
+        runner = _make_update_runner()
+        hermes_home = tmp_path / "hermes"
+        hermes_home.mkdir()
+        pending = hermes_home / ".update_pending.json"
+        pending.write_text(json.dumps({
+            "platform": "telegram", "chat_id": "67890", "user_id": "12345",
+        }))
+        runner.adapters = {Platform.TELEGRAM: AsyncMock()}
+        import gateway.run as gateway_run
+        monkeypatch.setattr(gateway_run, "_hermes_home", hermes_home)
+
+        await runner._watch_update_progress(
+            poll_interval=0.01, stream_interval=0.01, timeout=0.03
+        )
+
+        assert pending.exists(), (
+            "маркер стёрт — новый шлюз не сможет досказать клиенту итог"
+        )

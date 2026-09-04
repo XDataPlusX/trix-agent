@@ -4886,8 +4886,22 @@ def _cmd_update_impl(args, gateway_mode: bool):
         # regardless of how we die.
         if gateway_mode:
             _exit_code_path = get_hermes_home() / ".update_exit_code"
+            # Код исхода отражает то, что произошло, а не факт «дошли сюда».
+            #
+            # Раньше здесь безусловно писался ноль, и клиент после провала
+            # установки Node-зависимостей видел ДВА противоречащих
+            # сообщения подряд: английское «⚠ Update partially complete —
+            # Node.js dependencies … did not refresh» в блоке кода, а
+            # следом зелёную галочку «Обновление завершено».
+            #
+            # Пишем 2 (частичный успех), а не 1: обновление НЕ провалилось —
+            # код и Python-зависимости обновлены и работоспособны, не
+            # обновились только Node-зависимости. Единица заставила бы шлюз
+            # объявить полный отказ там, где продукт исправен, и это было бы
+            # такой же неправдой, только с другой стороны.
+            _marker = "2" if node_failures else "0"
             try:
-                _exit_code_path.write_text("0", encoding="utf-8")
+                _exit_code_path.write_text(_marker, encoding="utf-8")
             except OSError:
                 pass
 

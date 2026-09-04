@@ -5069,8 +5069,25 @@ def _clear_bytecode_cache(root: Path) -> int:
     to recompile from the .py source on next import.
 
     Returns the number of directories removed.
+
+    **Отказ по правам больше не проглатывается молча.** Раньше здесь
+    стоял голый ``except OSError: pass``: каталог, принадлежащий другому
+    пользователю, не удалялся, счётчик не рос, предупреждения не было — и
+    обновление печатало бодрое «✓ Cleared N stale __pycache__
+    directories», хотя ядро продукта осталось с прежним байт-кодом.
+
+    Замерено на клиентской машине 2026-09-05: 216 файлов в `__pycache__`
+    принадлежали root (следы шагов установки, работавших от root), и
+    чистка от имени `user` не трогала из них ни одного, рапортуя успех.
+    Сегодня это не рвётся только потому, что Python сверяет `.pyc` по
+    времени исходника, — то есть по везению, а не по устройству.
+
+    Причину чиним в рецепте (владельца отдают после последнего действия
+    от root), но проглоченный отказ — отдельный дефект: он лишает
+    читающего вывод единственного шанса заметить, что шаг не выполнился.
     """
     removed = 0
+    failed: list[str] = []
     for dirpath, dirnames, _ in os.walk(root):
         # Skip venv / node_modules / .git entirely
         dirnames[:] = [
@@ -5082,9 +5099,22 @@ def _clear_bytecode_cache(root: Path) -> int:
             try:
                 shutil.rmtree(dirpath)
                 removed += 1
-            except OSError:
-                pass
+            except OSError as exc:
+                failed.append(f"{dirpath}: {exc.strerror or exc}")
             dirnames.clear()  # nothing left to recurse into
+    if failed:
+        print(
+            f"  ⚠ Не удалось очистить {len(failed)} каталог(ов) __pycache__ — "
+            "часть дерева принадлежит другому пользователю."
+        )
+        for line in failed[:3]:
+            print(f"    {line}")
+        if len(failed) > 3:
+            print(f"    … и ещё {len(failed) - 3}")
+        print(
+            "    Продукт продолжит работать, но после обновления возможен "
+            "устаревший байт-код. Починка: вернуть каталогу установки владельца."
+        )
     return removed
 
 
@@ -5587,12 +5617,36 @@ def _run_npm_install_deterministic(
     return _attempt(repaired_npm)
 
 
+# Потолок на один вызов npm.
+#
+# Без него `hermes update` у клиента замирает молча и надолго. Замерено на
+# клиентской машине 2026-09-05: `npm ci` встал на 16,5 минут на ОДНОМ
+# tarball — в логе npm `997189ms attempt #2`, а `ss` показывал
+# `backoff:14 rto:120000 bytes_retrans:19639 bytes_acked:1`, то есть
+# чёрную дыру TCP к одному адресу CDN, при том что `curl` с той же машины
+# отвечал за 0,9 секунды.
+#
+# Хуже, что это не гипотетика: в логе обновления той же машины прогон
+# 0.1.3 -> 0.1.4 обрывается ровно на строке «Updating Node.js
+# dependencies...» без строки завершения. Код тогда уже лёг (git идёт
+# раньше), а зависимости нет — машина простояла вечер на наполовину
+# применённом обновлении.
+#
+# 15 минут: заведомо больше честной установки зависимостей на медленном
+# канале (полный `npm ci` этого дерева укладывается в 2-4 минуты даже на
+# слабой VM) и заведомо меньше 30-минутного потолка наблюдателя в шлюзе —
+# иначе наблюдатель успевает соврать клиенту «прервано по тайм-ауту»
+# раньше, чем шаг честно сдастся.
+_NPM_STEP_TIMEOUT_SECONDS = 900
+
+
 def _run_npm_watching_for_engine_failure(
     cmd: list[str],
     *,
     cwd: Path,
     env: dict[str, str],
     capture_output: bool,
+    timeout: float | None = _NPM_STEP_TIMEOUT_SECONDS,
 ) -> subprocess.CompletedProcess:
     """Run *cmd*, always retaining stderr so ``EBADENGINE`` stays detectable.
 
@@ -5601,20 +5655,32 @@ def _run_npm_watching_for_engine_failure(
     engine-failure recovery nothing to read. Tee stderr instead: each line is
     forwarded to this process's stderr as it arrives (so live output is
     unchanged) and accumulated for the caller.
+
+    Тайм-аут возвращается КАК ОТКАЗ, а не исключением: вызывающий уже умеет
+    разбирать неуспешный `CompletedProcess` (ветка восстановления
+    EBADENGINE), а исключение отсюда прервало бы обновление целиком —
+    хотя код к этому моменту уже обновлён и работоспособен.
     """
     if capture_output:
-        return subprocess.run(
-            cmd,
-            cwd=cwd,
-            env=env,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            check=False,
-        )
+        try:
+            return subprocess.run(
+                cmd,
+                cwd=cwd,
+                env=env,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                check=False,
+                timeout=timeout,
+            )
+        except subprocess.TimeoutExpired as exc:
+            return subprocess.CompletedProcess(
+                cmd, 124, exc.stdout or "", _npm_timeout_message(timeout, exc.stderr)
+            )
 
     captured: list[str] = []
+    timed_out = False
     with subprocess.Popen(
         cmd,
         cwd=cwd,
@@ -5629,8 +5695,37 @@ def _run_npm_watching_for_engine_failure(
                 captured.append(line)
                 sys.stderr.write(line)
             sys.stderr.flush()
-        returncode = proc.wait()
+        try:
+            returncode = proc.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            # Убиваем группу, а не только npm: он порождает дочерние
+            # процессы загрузки, и осиротевший потомок продолжил бы
+            # держать сеть и файлы уже после того, как обновление ушло
+            # дальше.
+            timed_out = True
+            proc.kill()
+            try:
+                proc.wait(timeout=30)
+            except Exception:
+                pass
+            returncode = 124
+    if timed_out:
+        captured.append(_npm_timeout_message(timeout, None))
+        sys.stderr.write(captured[-1])
     return subprocess.CompletedProcess(cmd, returncode, None, "".join(captured))
+
+
+def _npm_timeout_message(timeout: float | None, tail: str | None) -> str:
+    minutes = int((timeout or 0) // 60)
+    text = (
+        f"\nnpm не уложился в {minutes} мин и был остановлен. "
+        "Обычно это залипшая загрузка одного пакета, а не поломка проекта: "
+        "код уже обновлён, зависимости Node остались прежними. "
+        "Повторите обновление позже.\n"
+    )
+    if tail:
+        text = f"{tail}{text}"
+    return text
 
 
 def _missing_web_build_tool(output: str) -> str | None:

@@ -1231,7 +1231,8 @@ trix:
     # prompt, so the "reply /approve or /deny" tail from needs_input
     # would contradict them. Same phrase minus that tail.
     needs_input_header: "Update needs your input:"
-    timeout: "❌ Update timed out after 30 minutes."
+    partial: "⚠️ The update was applied partially: the agent itself is updated and working, but some auxiliary components could not be refreshed. Nothing to do — they will be picked up by the next update."
+    timeout: "⏳ The update is taking longer than usual — I stopped streaming progress, but it has NOT been cancelled and is still running. The result will arrive here when it finishes."
     finished_with_output: "✅ Update finished.\n\n```\n{output}\n```"
     failed_with_output: "❌ Update failed.\n\n```\n{output}\n```"
     finished_success: "✅ Update finished successfully."
