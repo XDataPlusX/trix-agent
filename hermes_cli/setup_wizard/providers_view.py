@@ -339,6 +339,13 @@ def _is_blocked_anthropic_device_code(name: str, kind: str) -> bool:
     return (provider_group_for_slug(name) or name) == "anthropic"
 
 
+def _key_guide_payload(env_key: str | None) -> dict | None:
+    """Справка по ключу провайдера — отдельной функцией ради подмены в тестах."""
+    from hermes_cli.trix_key_guides import guide_payload
+
+    return guide_payload(env_key or "")
+
+
 def wizard_providers() -> list[dict]:
     """Return one row per provider that the wizard form can render.
 
@@ -365,6 +372,11 @@ def wizard_providers() -> list[dict]:
                 "signup_url": p.signup_url or "",
                 "kind": kind,
                 "env_var": (p.env_vars[0] if p.env_vars else None),
+                # Справка «как получить ключ» — тот же справочник, что у
+                # блоков инструментов (hermes_cli/trix_key_guides). Здесь
+                # она нужнее всего: ключ к модели получает КАЖДЫЙ клиент,
+                # тогда как ключи инструментов — только те, кто их выбрал.
+                "guide": _key_guide_payload(p.env_vars[0] if p.env_vars else ""),
                 "base_url": p.base_url or "",
                 "fallback_models": list(p.fallback_models or ()),
             }

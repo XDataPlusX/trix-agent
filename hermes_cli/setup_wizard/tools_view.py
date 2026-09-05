@@ -360,6 +360,13 @@ TITLES_RU: dict[str, str] = {
 # renderHomeAssistantBlock() — so the dict stays a complete, key-addressable
 # map of the whole catalog rather than "whatever page.py happens to read
 # today".
+def _key_guide_payload(env_key: str) -> dict | None:
+    """Справка по ключу — отдельной функцией ради подмены в тестах."""
+    from hermes_cli.trix_key_guides import guide_payload
+
+    return guide_payload(env_key)
+
+
 RU_ENV_PROMPTS: dict[str, str] = {
     "VOICE_TOOLS_OPENAI_KEY": "Ключ OpenAI API",
     "OPENAI_API_KEY": "Ключ OpenAI API",
@@ -1007,6 +1014,15 @@ def wizard_tool_blocks() -> list[dict]:
                 ru_prompt = RU_ENV_PROMPTS.get(env.get("key", ""))
                 if ru_prompt:
                     env["prompt_ru"] = ru_prompt
+                # Справка «как получить ключ» подмешивается ЗДЕСЬ, рядом с
+                # русской подписью, а не в каждом блоке страницы: тогда она
+                # сама доезжает во все блоки, которые рисуют env_vars, и
+                # добавление сервиса не требует правок в page.py.
+                # См. hermes_cli/trix_key_guides — там же живёт справочник
+                # «есть ли бесплатный тариф», который мы ведём.
+                guide = _key_guide_payload(env.get("key", ""))
+                if guide:
+                    env["guide"] = guide
             if cat_key in _WEB_CATEGORIES and _is_self_hosted_row(provider) and not provider.get("post_setup"):
                 probe_url = _self_hosted_probe_url(provider)
                 if not probe_url:

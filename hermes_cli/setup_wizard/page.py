@@ -564,6 +564,12 @@ button:disabled { opacity: 0.42; cursor: default; }
   border-left: 2px solid var(--border);
 }
 .muted-note { color: var(--text-dim); font-size: 0.88rem; padding: 0.3rem 0; }
+.key-guide { margin: 0.35rem 0 0.2rem; font-size: 0.9rem; }
+.key-guide-warning { font-size: 0.88rem; padding: 0.25rem 0; color: var(--warn, #b26a00); }
+.key-guide > summary { cursor: pointer; color: var(--text-dim); padding: 0.25rem 0; }
+.key-guide ol { margin: 0.35rem 0 0.35rem 1.2rem; padding: 0; line-height: 1.5; }
+.key-guide li { margin: 0.2rem 0; }
+.key-guide p { margin: 0.3rem 0; word-break: break-all; }
 .status-ok { color: var(--ok); font-size: 0.85rem; }
 .out-of-catalog-note { color: var(--text-dim); font-style: italic; font-size: 0.88rem; }
 .device-login-code {
@@ -2805,6 +2811,7 @@ _JS = """
     } else {
       el.textContent = "Регистрация: " + row.signup_url;
     }
+    appendKeyGuide(el, row.guide);
   }
 
   // ---- Auto-check the API key on step 4 (spec B2) — via the existing
@@ -3440,6 +3447,67 @@ _JS = """
     container.appendChild(note);
   }
 
+  // Справка «как получить ключ» — раскрывается по щелчку, свёрнута по
+  // умолчанию. Данные приходят с сервера готовыми в env.guide (их
+  // подмешивают рядом с русской подписью поля), поэтому эта функция одна
+  // на все блоки: добавление сервиса в справочник не требует правок здесь.
+  //
+  // Скриншотов чужих панелей тут нет намеренно: чужой интерфейс
+  // перерисуют и нас не спросят, а картинка протухнет молча.
+  function appendKeyGuide(container, guide) {
+    if (!container || !guide) return;
+    var steps = guide.steps || [];
+    var notes = guide.notes || [];
+    if (!steps.length && !notes.length && !guide.key_url && !guide.warning) return;
+
+    // Про карту и про «сервис платный» клиент обязан узнать ДО того, как
+    // пойдёт регистрироваться, — эта строка не прячется за щелчком.
+    if (guide.warning) {
+      var warn = document.createElement("div");
+      warn.className = "key-guide-warning";
+      warn.textContent = guide.warning;
+      container.appendChild(warn);
+    }
+
+    var box = document.createElement("details");
+    box.className = "key-guide";
+
+    var head = document.createElement("summary");
+    head.textContent = "Как получить ключ";
+    box.appendChild(head);
+
+    if (steps.length) {
+      var list = document.createElement("ol");
+      for (var i = 0; i < steps.length; i++) {
+        var li = document.createElement("li");
+        li.textContent = steps[i];
+        list.appendChild(li);
+      }
+      box.appendChild(list);
+    }
+
+    if (guide.key_url && isHttpUrl(guide.key_url)) {
+      var p = document.createElement("p");
+      p.appendChild(document.createTextNode("Страница ключей: "));
+      var a = document.createElement("a");
+      a.href = guide.key_url;
+      a.textContent = guide.key_url;
+      a.target = "_blank";
+      a.rel = "noopener";
+      p.appendChild(a);
+      box.appendChild(p);
+    }
+
+    for (var j = 0; j < notes.length; j++) {
+      var note = document.createElement("div");
+      note.className = "muted-note";
+      note.textContent = notes[j];
+      box.appendChild(note);
+    }
+
+    container.appendChild(box);
+  }
+
   function buildSelectRow(container, id, labelText, rightHint) {
     var row = document.createElement("div");
     // `no-label`: the right-hand hint is normally pushed down by the
@@ -3585,6 +3653,7 @@ _JS = """
         if (curEnv) applySecretPlaceholderEl(input, curEnv);
       }
       input.setAttribute("data-env-key", env.key);
+      appendKeyGuide(settings, env.guide);
       addedSomething = true;
     }
     var controlRow = document.createElement("div");
@@ -3931,6 +4000,7 @@ _JS = """
           input = appendSecretField(settings, "search_env_value", env.prompt_ru || "Ключ", "Нужен, только если выбран этот источник.");
           if (isSameField) applySecretPlaceholderEl(input, curEnv);
         }
+        appendKeyGuide(settings, env.guide);
         addedSomething = true;
       } else if (row.post_setup === "xai_grok") {
         // Polish (owner review, 2026-08-20): this row carries no env_vars
@@ -4056,6 +4126,7 @@ _JS = """
           input = appendSecretField(settings, "extract_env_value", env.prompt_ru || "Ключ", "Нужен, только если выбран этот источник.");
           if (isSameField) applySecretPlaceholderEl(input, curEnv);
         }
+        appendKeyGuide(settings, env.guide);
         addedSomething = true;
       }
       var controlRow = document.createElement("div");

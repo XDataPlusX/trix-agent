@@ -17,6 +17,7 @@ from pathlib import Path
 import yaml
 
 from hermes_constants import get_hermes_home
+from hermes_cli.trix_search_chain import primary_backend as _primary_backend
 
 FORM = {
     "telegram_token": "123:abc",
@@ -79,7 +80,9 @@ def test_search_backend_round_trip_ddgs_tavily_ddgs(tmp_path, monkeypatch):
     снят намеренно: сервер не может безопасно знать, не нужен ли этот же
     ключ ещё где-то (vision, auxiliary, credential pool). Оставшийся в .env
     ключ ничему не мешает — какой бэкенд реально используется, решает
-    ТОЛЬКО значение `web.search_backend` в config.yaml, а не факт наличия
+    ТОЛЬКО ВЫБОР клиента в `web.search_backend` (с 2026-09-05 там лежит
+    цепочка — выбор плюс бесключевой запасной, см. trix_search_chain),
+    а не факт наличия
     ключа в .env.
     """
     monkeypatch.setenv("HERMES_HOME", str(tmp_path))
@@ -91,14 +94,14 @@ def test_search_backend_round_trip_ddgs_tavily_ddgs(tmp_path, monkeypatch):
     form_a["search_backend"] = "ddgs"
     out = apply_settings(form_a)
     assert out["ok"], out
-    assert _config(home)["web"]["search_backend"] == "ddgs"
+    assert _primary_backend(_config(home)["web"]["search_backend"]) == "ddgs"
 
     form_b = dict(FORM)
     form_b["search_backend"] = "tavily"
     form_b["search_env"] = {"key": "TAVILY_API_KEY", "value": "tvly-test"}
     out = apply_settings(form_b)
     assert out["ok"], out
-    assert _config(home)["web"]["search_backend"] == "tavily"
+    assert _primary_backend(_config(home)["web"]["search_backend"]) == "tavily"
     env_text = _env_text(home)
     assert "TAVILY_API_KEY=" in env_text and "tvly-test" in env_text
 
@@ -106,7 +109,7 @@ def test_search_backend_round_trip_ddgs_tavily_ddgs(tmp_path, monkeypatch):
     form_c["search_backend"] = "ddgs"
     out = apply_settings(form_c)
     assert out["ok"], out
-    assert _config(home)["web"]["search_backend"] == "ddgs"
+    assert _primary_backend(_config(home)["web"]["search_backend"]) == "ddgs"
 
     # Ключ пережил возврат на ddgs — не был стёрт «на всякий случай».
     env_text = _env_text(home)

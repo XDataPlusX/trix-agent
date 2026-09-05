@@ -94,6 +94,7 @@ def test_row_contract_keys_and_custom_last():
         "env_var",
         "base_url",
         "fallback_models",
+        "guide",
     }
     rows = wizard_providers()
     for row in rows:
@@ -259,6 +260,7 @@ def test_variant_row_carries_flat_fields_plus_auth_label():
         "base_url",
         "fallback_models",
         "auth_label",
+        "guide",
     }
     for group in wizard_provider_groups():
         for variant in group["variants"]:
