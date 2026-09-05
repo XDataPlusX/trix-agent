@@ -71,6 +71,7 @@ from hermes_constants import get_hermes_home, secure_parent_dir
 from hermes_cli import trix_support
 from hermes_cli.config import get_env_value, load_config
 from hermes_cli.models import provider_group_for_slug
+from hermes_cli.trix_search_chain import primary_backend as _primary_backend
 from hermes_cli.setup_wizard.apply import apply_settings
 from hermes_cli.setup_wizard.device_login import (
     DeviceLoginManager,
@@ -783,7 +784,12 @@ def _current_state(config: dict, tools_rows: list[dict]) -> dict:
             "api_key": _mask(get_env_value(provider_env_var) if provider_env_var else None),
             "device_login_ok": provider_device_login_ok,
         },
-        "search_backend": (web_cfg.get("search_backend") if isinstance(web_cfg, dict) else "") or "",
+        # Первый элемент цепочки — то, что клиент выбрал; в конфиге с
+        # 2026-09-05 может лежать список (см. trix_search_chain), и отдать
+        # его в поле выбора целиком значило бы потерять выбор при возврате.
+        "search_backend": _primary_backend(
+            web_cfg.get("search_backend") if isinstance(web_cfg, dict) else ""
+        ),
         "search_env": _current_search_env(web_cfg, tools_rows),
         # Same shape as search_backend/search_env above, for the SEPARATE
         # "web_extract" ("Чтение страниц") block.

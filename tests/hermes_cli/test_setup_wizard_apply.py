@@ -13,6 +13,7 @@ from pathlib import Path
 import yaml
 
 from hermes_constants import get_hermes_home
+from hermes_cli.trix_search_chain import primary_backend as _primary_backend
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 _TRIX_TEMPLATE = REPO_ROOT / "assets" / "config" / "trix-config.yaml"
@@ -256,7 +257,10 @@ def test_search_backend_not_extract_capable_never_swaps_toolset(tmp_path, monkey
     assert out["ok"], out
 
     raw = yaml.safe_load((home / "config.yaml").read_text())
-    assert raw["web"]["search_backend"] == "brave-free"
+    # С 2026-09-05 сюда пишется ЦЕПОЧКА (выбор клиента + бесключевой
+    # запасной) — см. hermes_cli/trix_search_chain. Проверяем выбор
+    # клиента, а не форму хранения.
+    assert _primary_backend(raw["web"]["search_backend"]) == "brave-free"
     assert "extract_backend" not in raw["web"]
     assert "search" in raw["platform_toolsets"]["telegram"]
     assert "web" not in raw["platform_toolsets"]["telegram"]
@@ -581,7 +585,7 @@ def test_apply_preserves_client_template_comments(tmp_path, monkeypatch):
     assert "web" in telegram_toolsets
     assert "search" not in telegram_toolsets
     assert raw["model"]["provider"] == "openrouter"
-    assert raw["web"]["search_backend"] == "firecrawl"
+    assert _primary_backend(raw["web"]["search_backend"]) == "firecrawl"
     assert raw["web"]["extract_backend"] == "firecrawl"
 
     # ...and the template's documentation must have survived the write.

@@ -831,7 +831,17 @@ def apply_settings(form: dict) -> dict:
 
         search_backend = form.get("search_backend")
         if search_backend:
-            cfg.setdefault("web", {})["search_backend"] = search_backend
+            # Пишем ЦЕПОЧКУ, а не один движок: выбор клиента первым, за ним
+            # бесключевой запасной. Одна строка здесь означала, что
+            # `_run_search_backend_chain` не включается вовсе и первый же
+            # отказ выбранного поисковика оставляет клиента без поиска —
+            # см. hermes_cli/trix_search_chain.
+            from hermes_cli.trix_search_chain import build_search_chain
+
+            chain = build_search_chain(search_backend)
+            cfg.setdefault("web", {})["search_backend"] = (
+                chain if len(chain) > 1 else search_backend
+            )
             pending.append("web.search_backend")
 
         # Finding 1 (review 2026-08-26, owner-approved fix): explicit

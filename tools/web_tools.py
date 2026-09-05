@@ -829,12 +829,12 @@ def _run_search_backend_chain(chain: List[str], query: str, limit: int) -> dict:
 
         attempts.append(f"{name}: {_describe_search_attempt_failure(response)}")
 
-    tried = "; ".join(attempts) if attempts else "цепочка web.search_backend пуста"
+    tried = "; ".join(attempts) if attempts else "список поисковиков пуст"
     return {
         "success": False,
         "error": (
-            f"Ни один поисковик из цепочки web.search_backend не вернул "
-            f"результат по запросу «{query}». Пробовали по порядку: {tried}."
+            f"Ни один из настроенных поисковиков не вернул результат по "
+            f"запросу «{query}». Пробовали по порядку: {tried}."
         ),
     }
 
@@ -966,6 +966,15 @@ def web_search_tool(query: str, limit: int = 5) -> str:
                 response_data = _reject_empty_search_success(
                     response_data, provider.name, query
                 )
+
+        # Одна общая точка для обеих веток выше (цепочка и одиночный
+        # движок): отказ поиска обязан говорить, что с ним делать —
+        # см. tools/trix_search_advice.py.
+        from tools.trix_search_advice import advise_on_search_failure
+
+        response_data = advise_on_search_failure(
+            response_data, _get_search_backend()
+        )
 
         debug_call_data["results_count"] = len(response_data.get("data", {}).get("web", []))
         result_json = json.dumps(response_data, indent=2, ensure_ascii=False)
