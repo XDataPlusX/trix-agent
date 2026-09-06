@@ -565,7 +565,10 @@ def get_cross_profile_warning(path: str) -> Optional[str]:
 # Non-local terminal backends (Docker, Daytona, etc.) bind a sandbox-local
 # directory to the container's ``$HOME``. The on-disk layout looks like
 #
-#   <HERMES_HOME>/profiles/<name>/sandboxes/<backend>/<task>/home/.hermes/...
+#   <HERMES_HOME>/profiles/<name>/sandboxes/<backend>/<task>/home/<sandbox-home-name>/...
+#
+# where ``<sandbox-home-name>`` is SANDBOX_HERMES_BASE's basename (currently
+# ``.trix``; ``.hermes`` before Спека 18 — see ``_sandbox_mirror_home_names``).
 #
 # When the agent (running host-side) speculates that authoritative profile
 # state lives at one of those sandbox-mirror paths, the write lands on the
@@ -574,29 +577,51 @@ def get_cross_profile_warning(path: str) -> Optional[str]:
 # disk two divergent copies accumulate. See #32049 for evidence.
 #
 # This guard is path-shape-only: it detects the
-# ``…/sandboxes/<backend>/<task>/home/.hermes/…`` segment and warns
-# regardless of which Hermes profile is active. It does NOT cover the
+# ``…/sandboxes/<backend>/<task>/home/<sandbox-home-name>/…`` segment and
+# warns regardless of which Hermes profile is active. It does NOT cover the
 # inner-container case where the bind mount strips the ``sandboxes/`` prefix
-# (the agent's view inside the container is plain ``/root/.hermes/...``);
-# that case needs a separate dispatch-layer or host-side ``profile_state``
-# tool.
+# (the agent's view inside the container is plain
+# ``SANDBOX_HERMES_BASE/...``); that case needs a separate dispatch-layer or
+# host-side ``profile_state`` tool.
 # ---------------------------------------------------------------------------
 
 
-def _find_sandbox_mirror_segments(parts: tuple) -> Optional[int]:
-    """Return the index of the inner ``.hermes`` part in a sandbox-mirror path.
+def _sandbox_mirror_home_names() -> tuple[str, ...]:
+    """Return the sandbox-home directory names the mirror guard must match.
 
-    Matches ``…/sandboxes/<backend>/<task>/home/.hermes/…`` and returns the
-    index where the inner Hermes-state portion starts. Returns ``None`` for
-    paths that do not contain the sandbox-mirror shape.
+    Спека 18 renamed the in-sandbox base from ``/root/.hermes`` to
+    ``SANDBOX_HERMES_BASE`` (``/root/.trix``); the host-side mirror of that
+    directory (``…/sandboxes/<backend>/<task>/home/<name>/…``) is named the
+    same. Both the current and the pre-rename name are accepted here
+    PERMANENTLY, for the same reason the ``gateway/platforms/base.py``
+    container-credential guard accepts both bases permanently: a persistent
+    sandbox created before the rename keeps mirroring under the old name
+    until it is recreated, and this is a local (not module-level) import to
+    avoid a circular import — ``tools.credential_files`` imports
+    ``agent.file_safety`` at its own module level.
     """
+    from tools.credential_files import LEGACY_SANDBOX_HERMES_BASE, SANDBOX_HERMES_BASE
+
+    current_name = SANDBOX_HERMES_BASE.rsplit("/", 1)[-1]
+    legacy_name = LEGACY_SANDBOX_HERMES_BASE.rsplit("/", 1)[-1]
+    return (current_name, legacy_name)
+
+
+def _find_sandbox_mirror_segments(parts: tuple) -> Optional[int]:
+    """Return the index of the inner sandbox-home part in a mirror path.
+
+    Matches ``…/sandboxes/<backend>/<task>/home/<sandbox-home-name>/…`` and
+    returns the index where the inner Hermes-state portion starts. Returns
+    ``None`` for paths that do not contain the sandbox-mirror shape.
+    """
+    home_names = _sandbox_mirror_home_names()
     for i, part in enumerate(parts):
         if part != "sandboxes":
             continue
-        # Need at least: sandboxes / <backend> / <task> / home / .hermes / <thing>
+        # Need at least: sandboxes / <backend> / <task> / home / <name> / <thing>
         if i + 5 >= len(parts):
             continue
-        if parts[i + 3] == "home" and parts[i + 4] == ".hermes":
+        if parts[i + 3] == "home" and parts[i + 4] in home_names:
             return i + 4
     return None
 
@@ -673,11 +698,11 @@ def get_sandbox_mirror_warning(path: str) -> Optional[str]:
 # Container-context mirror guard (inner-container case — #32049 follow-up)
 #
 # Brian's shape-based detector (#32213) catches paths that still carry the
-# full ``…/sandboxes/<backend>/<task>/home/.hermes/…`` prefix on the host.
-# But when file tools execute *inside* the container the bind-mount strips
-# that prefix: the agent sees plain ``/root/.hermes/…``.  The root:root
-# ownership on the divergent SOUL.md in #32049 confirms this is the primary
-# failure mode.
+# full ``…/sandboxes/<backend>/<task>/home/<sandbox-home-name>/…`` prefix on
+# the host. But when file tools execute *inside* the container the
+# bind-mount strips that prefix: the agent sees plain
+# ``SANDBOX_HERMES_BASE/…``.  The root:root ownership on the divergent
+# SOUL.md in #32049 confirms this is the primary failure mode.
 #
 # Fix: file_tools passes the active Docker mirror prefix when the terminal
 # backend is docker + persistent. This catches the very first file-tool call,

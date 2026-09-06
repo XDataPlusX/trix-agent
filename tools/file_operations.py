@@ -798,7 +798,7 @@ DEFAULT_SEARCH_LIMIT = 50
 
 # Echoed by the size probe when the path exists but is not a regular file.
 # `wc -c` prints only digits, so this can never collide with a real size.
-NOT_REGULAR_SENTINEL = "__hermes_not_regular__"
+NOT_REGULAR_SENTINEL = "__trix_not_regular__"
 
 
 def _coerce_int(value: Any, default: int) -> int:

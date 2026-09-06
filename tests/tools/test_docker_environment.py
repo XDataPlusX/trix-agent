@@ -165,9 +165,9 @@ def _make_execute_only_env(forward_env=None):
     env._docker_exe = "/usr/bin/docker"
     # Base class attributes needed by unified execute()
     env._session_id = "test123"
-    env._snapshot_path = "/tmp/hermes-snap-test123.sh"
+    env._snapshot_path = "/tmp/trix-snap-test123.sh"
     env._cwd_file = "/tmp/hermes-cwd-test123.txt"
-    env._cwd_marker = "__HERMES_CWD_test123__"
+    env._cwd_marker = "__TRIX_CWD_test123__"
     env._snapshot_ready = True
     env._last_sync_time = None
     env._init_env_args = []
@@ -355,6 +355,97 @@ def test_wrapped_exec_scopes_explicit_forward_env_across_profiles(monkeypatch, t
             ).read_text(encoding="utf-8")
     finally:
         ss.set_multiplex_active(False)
+
+
+# ── Спека 17: client proxy passthrough tests ────────────────────────
+
+def test_init_env_args_forwards_builtin_proxy_var(monkeypatch):
+    """Ruling 1: HTTPS_PROXY reaches the sandbox with no docker_forward_env
+    or terminal.env_passthrough configured — the built-in list alone must
+    be enough."""
+    env = _make_execute_only_env()
+    monkeypatch.setenv("HTTPS_PROXY", "http://proxy.example:8080")
+    monkeypatch.setattr(docker_env, "_load_hermes_env_vars", lambda: {})
+
+    args = env._build_init_env_args()
+
+    assert "HTTPS_PROXY=http://proxy.example:8080" in args
+
+
+def test_snapshot_excludes_builtin_proxy_names_without_multiplex(monkeypatch):
+    """Ruling 2: the built-in proxy names are excluded from the shared
+    `export -p` snapshot unconditionally, not only under active
+    multiplexing — the runtime `-e` value must never be clobbered by a
+    stale value sourced back out of the snapshot on a single-profile box."""
+    from agent import secret_scope as ss
+    from tools.env_passthrough import BUILTIN_PASSTHROUGH_NAMES
+
+    env = _make_execute_only_env()
+    env._snapshot_passthrough_names = set()
+    ss.set_multiplex_active(False)
+    try:
+        names = set(env._snapshot_excluded_passthrough_names())
+    finally:
+        ss.set_multiplex_active(False)
+
+    assert BUILTIN_PASSTHROUGH_NAMES <= names
+
+
+def test_init_env_args_suppresses_builtin_proxy_under_egress(monkeypatch):
+    """Ruling 4: once iron-proxy egress is active for this environment, the
+    built-in proxy passthrough must not re-inject the client's own proxy —
+    it would silently win over the egress-injected value on every
+    `docker exec -e`."""
+    env = _make_execute_only_env()
+    env._egress_suppressed_passthrough_names = frozenset(
+        docker_env._critical_egress_env_names({})
+    )
+    monkeypatch.setenv("HTTPS_PROXY", "http://client-proxy.example:3128")
+    monkeypatch.setattr(docker_env, "_load_hermes_env_vars", lambda: {})
+
+    args = env._build_init_env_args()
+    args_str = " ".join(args)
+
+    assert "HTTPS_PROXY=" not in args_str
+
+
+def test_egress_active_suppresses_builtin_proxy_at_runtime(monkeypatch):
+    """Ruling 4, end-to-end: when _egress_proxy_args_for_docker() returns
+    non-empty overrides at container-creation time, __init__ must compute
+    _egress_suppressed_passthrough_names so later runtime `docker exec -e`
+    calls never override iron-proxy's own proxy env with the client's."""
+    monkeypatch.setattr(docker_env, "find_docker", lambda: "/usr/bin/docker")
+    monkeypatch.setattr(
+        docker_env, "_egress_proxy_args_for_docker",
+        lambda: ([], {"HTTPS_PROXY": "http://host.docker.internal:9999"}, []),
+    )
+    _mock_subprocess_run(monkeypatch)
+    monkeypatch.setenv("HTTPS_PROXY", "http://client-proxy.example:3128")
+    monkeypatch.setattr(docker_env, "_load_hermes_env_vars", lambda: {})
+
+    env = _make_dummy_env()
+
+    runtime_args = env._build_runtime_env_args()
+
+    assert "HTTPS_PROXY=http://client-proxy.example:3128" not in " ".join(runtime_args)
+
+
+def test_egress_inactive_does_not_suppress_builtin_proxy(monkeypatch):
+    """Ruling 4 negative case: with egress disabled (the client default),
+    the built-in proxy passthrough must not be suppressed."""
+    monkeypatch.setattr(docker_env, "find_docker", lambda: "/usr/bin/docker")
+    monkeypatch.setattr(
+        docker_env, "_egress_proxy_args_for_docker", lambda: ([], {}, []),
+    )
+    _mock_subprocess_run(monkeypatch)
+    monkeypatch.setenv("HTTPS_PROXY", "http://client-proxy.example:3128")
+    monkeypatch.setattr(docker_env, "_load_hermes_env_vars", lambda: {})
+
+    env = _make_dummy_env()
+
+    runtime_args = env._build_runtime_env_args()
+
+    assert "HTTPS_PROXY=http://client-proxy.example:3128" in " ".join(runtime_args)
 
 
 # ── docker_env tests ──────────────────────────────────────────────
@@ -1488,3 +1579,206 @@ def test_extra_args_set_shm_size_helper():
     assert docker_env._extra_args_set_shm_size(None) is False
     # non-string entries must not crash (config.yaml can be malformed)
     assert docker_env._extra_args_set_shm_size([42, None, "--shm-size=1g"]) is True
+
+
+# ── Спека 18 migration: rename /root/.hermes -> SANDBOX_HERMES_BASE ────────
+#
+# Container reuse matches on labels only (see the label block in
+# DockerEnvironment.__init__), so a persistent container created before the
+# sandbox base rename would be reused forever with its stale
+# /root/.hermes mounts unless `hermes update` force-removes it. The nested
+# cache bind-mounts also leave a stale `home/.hermes` mount-point directory
+# on the host that survives `docker rm` on its own.
+
+
+def test_migrate_force_removes_hermes_agent_containers_for_active_profile(monkeypatch):
+    """Every ``hermes-agent=1`` container for the active profile is
+    force-removed regardless of running/exited state — container reuse
+    matches on labels only and does not fingerprint mounts, so a stale
+    mount set would otherwise be reused forever."""
+    calls = []
+
+    def _run(cmd, **kwargs):
+        calls.append(list(cmd) if isinstance(cmd, list) else cmd)
+        if not isinstance(cmd, list) or len(cmd) < 2:
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+        sub = cmd[1]
+        if sub == "ps":
+            return subprocess.CompletedProcess(cmd, 0, stdout="cid-a\ncid-b\n", stderr="")
+        if sub == "rm":
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(docker_env.subprocess, "run", _run)
+    monkeypatch.setattr(docker_env, "_get_active_profile_name", lambda: "default")
+
+    result = docker_env.migrate_sandbox_hermes_base(docker_exe="/usr/bin/docker")
+
+    assert result["containers_removed"] == 2
+    ps_call = next(c for c in calls if c[1:2] == ["ps"])
+    assert "label=hermes-profile=default" in ps_call
+    rm_ids = {c[-1] for c in calls if c[1:2] == ["rm"]}
+    assert rm_ids == {"cid-a", "cid-b"}
+
+
+def test_migrate_continues_after_individual_rm_failure(monkeypatch):
+    """One container failing to remove must not abort the sweep."""
+
+    def _run(cmd, **kwargs):
+        if not isinstance(cmd, list) or len(cmd) < 2:
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+        sub = cmd[1]
+        if sub == "ps":
+            return subprocess.CompletedProcess(cmd, 0, stdout="cid-a\ncid-b\n", stderr="")
+        if sub == "rm":
+            if cmd[-1] == "cid-a":
+                return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="busy")
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(docker_env.subprocess, "run", _run)
+
+    result = docker_env.migrate_sandbox_hermes_base(
+        profile_filter="default", docker_exe="/usr/bin/docker",
+    )
+    assert result["containers_removed"] == 1
+
+
+def test_migrate_no_containers_and_no_docker_is_a_safe_no_op(monkeypatch):
+    """No Docker binary at all — the migration must not raise, and must
+    still attempt the host-side cleanup step."""
+    monkeypatch.setattr(docker_env, "find_docker", lambda: None)
+
+    result = docker_env.migrate_sandbox_hermes_base()
+
+    assert result["containers_removed"] == 0
+    assert result["host_dirs_removed"] == []
+
+
+def test_migrate_removes_stale_host_mirror_but_preserves_trix_and_workspace(
+    monkeypatch, tmp_path,
+):
+    """The stale ``home/.hermes`` mount-point tree is removed; the current
+    ``home/.trix`` mirror and the sibling ``workspace/`` directory — both
+    real host state that survives container recreation — are untouched."""
+    monkeypatch.setattr(docker_env, "find_docker", lambda: None)  # skip container step
+    monkeypatch.setenv("TERMINAL_SANDBOX_DIR", str(tmp_path / "sandboxes"))
+
+    task_home = tmp_path / "sandboxes" / "docker" / "default" / "home"
+    stale = task_home / ".hermes" / "cache" / "documents"
+    stale.mkdir(parents=True)
+    # Пустой скелет точек монтирования — ровно то, что докер создаёт сам
+    # и что миграции разрешено убирать. Дерево С ФАЙЛАМИ она обязана
+    # сохранить (это домашний каталог агента, туда пишут скиллы) —
+    # проверяется в TestMigrationNeverDeletesAgentData.
+    (task_home / ".hermes" / "profiles" / "group1").mkdir(parents=True)
+
+    current = task_home / ".trix"
+    current.mkdir(parents=True)
+    (current / "keep.txt").write_text("current mirror — must survive")
+
+    workspace = tmp_path / "sandboxes" / "docker" / "default" / "workspace"
+    workspace.mkdir(parents=True)
+    (workspace / "project.py").write_text("print('hi')")
+
+    result = docker_env.migrate_sandbox_hermes_base()
+
+    assert not (task_home / ".hermes").exists()
+    assert str(task_home / ".hermes") in result["host_dirs_removed"]
+    assert (current / "keep.txt").read_text() == "current mirror — must survive"
+    assert (workspace / "project.py").read_text() == "print('hi')"
+
+
+def test_migrate_host_cleanup_is_idempotent(monkeypatch, tmp_path):
+    """Running the migration twice must not error, and the second run finds
+    nothing left to remove."""
+    monkeypatch.setattr(docker_env, "find_docker", lambda: None)
+    monkeypatch.setenv("TERMINAL_SANDBOX_DIR", str(tmp_path / "sandboxes"))
+
+    stale = tmp_path / "sandboxes" / "docker" / "default" / "home" / ".hermes"
+    (stale / "cache" / "documents").mkdir(parents=True)
+
+    first = docker_env.migrate_sandbox_hermes_base()
+    assert len(first["host_dirs_removed"]) == 1
+    assert not stale.exists()
+
+    second = docker_env.migrate_sandbox_hermes_base()
+    assert second["host_dirs_removed"] == []
+    assert second["containers_removed"] == 0
+
+
+class TestMigrationNeverDeletesAgentData:
+    """Спека 18, Ruling 5 — граница миграции.
+
+    `home/.hermes` внутри песочницы — это домашний каталог самого агента,
+    и связанные скиллы велят ему писать туда состояние
+    (`~/.hermes/competitor-watches/`, `.hermes/plans/`). Слепой rmtree
+    удалял бы данные клиента при рядовом `hermes update`.
+    """
+
+    def _sandbox(self, tmp_path, monkeypatch):
+        root = tmp_path / "sandboxes"
+        (root / "docker" / "default" / "home").mkdir(parents=True)
+        monkeypatch.setattr(
+            "tools.environments.base.get_sandbox_dir", lambda: root,
+        )
+        return root / "docker" / "default" / "home"
+
+    def test_removes_the_empty_mount_point_skeleton(self, tmp_path, monkeypatch):
+        from tools.environments.docker import migrate_sandbox_hermes_base
+
+        home = self._sandbox(tmp_path, monkeypatch)
+        for sub in ("cache/documents", "skills", "attachments"):
+            (home / ".hermes" / sub).mkdir(parents=True)
+
+        result = migrate_sandbox_hermes_base(docker_exe=None)
+
+        assert not (home / ".hermes").exists()
+        assert str(home / ".hermes") in result["host_dirs_removed"]
+        assert result["host_dirs_kept"] == []
+
+    def test_keeps_a_tree_that_holds_agent_data(self, tmp_path, monkeypatch):
+        from tools.environments.docker import migrate_sandbox_hermes_base
+
+        home = self._sandbox(tmp_path, monkeypatch)
+        watches = home / ".hermes" / "competitor-watches"
+        watches.mkdir(parents=True)
+        (watches / "state.json").write_text('{"seen": 1}')
+        (home / ".hermes" / "cache" / "documents").mkdir(parents=True)
+
+        result = migrate_sandbox_hermes_base(docker_exe=None)
+
+        assert (watches / "state.json").read_text() == '{"seen": 1}'
+        assert result["host_dirs_removed"] == []
+        assert str(home / ".hermes") in result["host_dirs_kept"]
+
+    def test_leaves_workspace_and_the_new_mirror_alone(self, tmp_path, monkeypatch):
+        from tools.environments.docker import migrate_sandbox_hermes_base
+
+        home = self._sandbox(tmp_path, monkeypatch)
+        (home / ".hermes" / "cache").mkdir(parents=True)
+        (home / ".trix" / "cache").mkdir(parents=True)
+        (home / ".trix" / "cache" / "keep.txt").write_text("x")
+        workspace = home.parent / "workspace"
+        workspace.mkdir()
+        (workspace / "project.py").write_text("print(1)")
+
+        migrate_sandbox_hermes_base(docker_exe=None)
+
+        assert (workspace / "project.py").exists()
+        assert (home / ".trix" / "cache" / "keep.txt").exists()
+        assert not (home / ".hermes").exists()
+
+    def test_idempotent_on_a_tree_it_decided_to_keep(self, tmp_path, monkeypatch):
+        """Повторное обновление не должно передумать и всё-таки удалить."""
+        from tools.environments.docker import migrate_sandbox_hermes_base
+
+        home = self._sandbox(tmp_path, monkeypatch)
+        (home / ".hermes" / "plans").mkdir(parents=True)
+        (home / ".hermes" / "plans" / "p.md").write_text("plan")
+
+        first = migrate_sandbox_hermes_base(docker_exe=None)
+        second = migrate_sandbox_hermes_base(docker_exe=None)
+
+        assert first["host_dirs_kept"] == second["host_dirs_kept"]
+        assert (home / ".hermes" / "plans" / "p.md").exists()

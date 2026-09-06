@@ -510,19 +510,59 @@ def test_proxy_writes_https_proxy_and_merges_no_proxy(tmp_path, monkeypatch):
         assert host in hosts, f"{host} missing from merged NO_PROXY"
 
 
+def test_proxy_writes_lowercase_twins_and_http_proxy(tmp_path, monkeypatch):
+    """Спека 17, Ruling 6: the wizard must also write the lowercase env-var
+    names and HTTP_PROXY — curl and most *nix tools inside the sandbox read
+    the lowercase form, and plain-http traffic needs HTTP_PROXY separately
+    from HTTPS_PROXY. TELEGRAM_PROXY stays a single, untouched write.
+    """
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    home = get_hermes_home()
+    home.mkdir(parents=True, exist_ok=True)
+    (home / ".env").write_text(
+        "NO_PROXY=my.internal.host\nno_proxy=my.other.host\n", encoding="utf-8"
+    )
+
+    from hermes_cli.setup_wizard.apply import apply_settings
+
+    form = dict(FORM)
+    form["proxy"] = "http://user:pass@host:8080"
+    out = apply_settings(form)
+    assert out["ok"], out
+
+    for key in ("TELEGRAM_PROXY", "HTTPS_PROXY", "https_proxy",
+                "HTTP_PROXY", "http_proxy", "NO_PROXY", "no_proxy"):
+        assert key in out["written"], f"{key} was not written: {out}"
+
+    from hermes_cli.config import load_env
+
+    env = load_env()
+    for key in ("HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"):
+        assert env.get(key) == "http://user:pass@host:8080", key
+
+    # Each casing merges against its OWN prior value, not the other case's.
+    assert "my.internal.host" in env.get("NO_PROXY", "").split(",")
+    assert "my.other.host" in env.get("no_proxy", "").split(",")
+    for host in ("api.z.ai", "localhost", "127.0.0.1", "::1"):
+        assert host in env.get("NO_PROXY", "").split(",")
+        assert host in env.get("no_proxy", "").split(",")
+
+
 def test_empty_proxy_is_a_no_op_for_https_proxy_and_no_proxy(tmp_path, monkeypatch):
     monkeypatch.setenv("HERMES_HOME", str(tmp_path))
     from hermes_cli.setup_wizard.apply import apply_settings
 
     out = apply_settings(dict(FORM))  # FORM's proxy is ""
     assert out["ok"], out
-    assert "HTTPS_PROXY" not in out["written"]
-    assert "NO_PROXY" not in out["written"]
+    for key in ("HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy",
+                "NO_PROXY", "no_proxy"):
+        assert key not in out["written"]
     env_path = get_hermes_home() / ".env"
     if env_path.exists():
         text = env_path.read_text()
-        assert "HTTPS_PROXY=" not in text
-        assert "NO_PROXY=" not in text
+        for key in ("HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy",
+                    "NO_PROXY", "no_proxy"):
+            assert f"{key}=" not in text
 
 
 def test_resolve_default_model_never_empty_for_known():

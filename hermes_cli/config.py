@@ -326,6 +326,13 @@ _EXTRA_ENV_KEYS = frozenset({
     "HERMES_COPILOT_ACP_ARGS",
     "COPILOT_CLI_PATH",
     "COPILOT_ACP_BASE_URL",
+    # Outbound proxy settings (Спека 17, Ruling 3) — written by the setup
+    # wizard (setup_wizard/apply.py) outside OPTIONAL_ENV_VARS. Listing them
+    # here lets reload_env() remove them from os.environ when the client
+    # deletes the proxy from .env; without this the gateway keeps routing
+    # through a dead proxy address until the next full restart.
+    "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY",
+    "http_proxy", "https_proxy", "all_proxy", "no_proxy",
 })
 import yaml
 

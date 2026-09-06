@@ -71,7 +71,7 @@ import logging
 import time
 import threading
 
-from hermes_constants import get_hermes_home, display_hermes_home
+from hermes_constants import get_hermes_home
 import os
 import re
 from enum import Enum
@@ -531,7 +531,7 @@ def _gateway_setup_hint() -> str:
 
         return GATEWAY_SECRET_CAPTURE_UNSUPPORTED_MESSAGE
     except Exception:
-        return f"Secure secret entry is not available. Load this skill in the local CLI to be prompted, or add the key to {display_hermes_home()}/.env manually."
+        return "Secure secret entry is not available. Load this skill in the local CLI to be prompted for the value."
 
 
 def _build_setup_note(

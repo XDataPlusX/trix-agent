@@ -197,6 +197,83 @@ def _sync_trix_config_sections(*, quiet: bool = False) -> None:
         )
 
 
+def _backfill_proxy_env(*, quiet: bool = False) -> None:
+    """Спека 17, Ruling 10 — дописать недостающие прокси-имена в ``.env``.
+
+    Мастер настройки этой же спеки пишет прокси сразу во все имена, но
+    клиент, настроивший прокси РАНЬШЕ, остался с одним ``HTTPS_PROXY``.
+    Его песочница ходит через прокси по https и напрямую по http —
+    молча, потому что видимая половина работает (проверено живьём на
+    VM 31.29.151.3).
+
+    Как и миграция выше, выполняется без участия клиента: шелла у него
+    нет, а `.env` править больше нечем. Идемпотентно; никогда не
+    перезаписывает то, что клиент задал сам; никогда не роняет
+    обновление.
+    """
+    try:
+        from hermes_cli.trix_proxy_backfill import backfill_notice, backfill_proxy_env
+
+        written = backfill_proxy_env()
+    except Exception:
+        logger.warning("Спека 17: не удалось дописать прокси в .env", exc_info=True)
+        return
+
+    notice = backfill_notice(written)
+    if notice and not quiet:
+        print(f"  ✓ {notice}")
+
+
+def _migrate_sandbox_hermes_base(*, quiet: bool = False) -> None:
+    """Спека 18 migration — client has no shell, so ``hermes update`` does it.
+
+    The Docker sandbox base moved from ``/root/.hermes`` to
+    ``SANDBOX_HERMES_BASE`` (``/root/.trix``) so the model stops reading its
+    own filesystem as evidence it's Hermes. Container reuse matches on
+    labels only (``tools/environments/docker.py``), so a persistent
+    container created before this change would otherwise be reused forever
+    with its stale ``/root/.hermes`` mounts, and the old host-side mirror
+    directory (``sandboxes/docker/*/home/.hermes``) survives ``docker rm``
+    on its own. MUST be unconditional on every ``hermes update`` run, next
+    to ``_sync_trix_config_sections`` — the client cannot run this itself.
+
+    Idempotent and best-effort: a machine with no Docker sandbox, or one
+    already migrated, does nothing and prints nothing. Never touches
+    ``workspace/`` or the current ``home/.trix`` mirror. Must never fail
+    ``hermes update``.
+    """
+    try:
+        from tools.environments.docker import migrate_sandbox_hermes_base
+
+        result = migrate_sandbox_hermes_base()
+    except Exception:
+        logger.warning(
+            "Спека 18: не удалось пересоздать песочницу под новой базой "
+            "путей (/root/.trix)",
+            exc_info=True,
+        )
+        return
+
+    removed_containers = result.get("containers_removed", 0)
+    removed_dirs = result.get("host_dirs_removed", [])
+    kept_dirs = result.get("host_dirs_kept", [])
+    if (removed_containers or removed_dirs) and not quiet:
+        print(
+            "  ✓ Песочница пересоздаётся под новой базой путей: "
+            f"контейнеров удалено {removed_containers}, "
+            f"хостовых каталогов-мигрантов убрано {len(removed_dirs)}."
+        )
+    if kept_dirs and not quiet:
+        # Молчать здесь нельзя: клиент увидит в песочнице И `.trix`, И
+        # старый `.hermes`, и это не поломка, а осознанный отказ трогать
+        # его данные.
+        print(
+            "  • Старый каталог песочницы оставлен нетронутым — в нём "
+            "лежат данные агента, а не пустые точки монтирования "
+            f"({len(kept_dirs)} шт.)."
+        )
+
+
 # Critical files that Hermes must be able to import immediately after an
 # update/install. Most are imported on every CLI startup; ``web_server.py``
 # is the desktop/dashboard backend path that a fresh Windows install launches
@@ -4771,6 +4848,12 @@ def _cmd_update_impl(args, gateway_mode: bool):
         # takes; nesting this call inside the migration path would mean it
         # never runs for them at all.
         _sync_trix_config_sections(quiet=False)
+
+        # Спека 18 — one-time-per-machine sandbox migration (idempotent).
+        # Same unconditional placement as the call above: it must run every
+        # time, independent of whether config.yaml needed a version bump.
+        _migrate_sandbox_hermes_base(quiet=False)
+        _backfill_proxy_env(quiet=False)
 
         # Safety net: config-version migrations have been observed to leave
         # cron/jobs.json valid-but-empty, silently dropping every scheduled

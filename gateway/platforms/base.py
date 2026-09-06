@@ -655,7 +655,7 @@ def streaming_tts_should_skip_whole_file(
 
 GATEWAY_SECRET_CAPTURE_UNSUPPORTED_MESSAGE = (
     "Secure secret entry is not supported over messaging. "
-    "Load this skill in the local CLI to be prompted, or add the key to ~/.hermes/.env manually."
+    "Load this skill in the local CLI to be prompted for the value."
 )
 
 
@@ -1594,8 +1594,9 @@ def _docker_persistent_home_host_root() -> Optional[Path]:
 def _cache_dir_container_mounts() -> List[Tuple[Path, Path]]:
     """(host, container) pairs for the auto-mounted Hermes cache dirs.
 
-    The agent legitimately sees generated artifacts at ``/root/.hermes/...``
-    (``agent_visible_image`` from image_generate, cache-dir reads) and will
+    The agent legitimately sees generated artifacts at
+    ``SANDBOX_HERMES_BASE/...`` (``agent_visible_image`` from image_generate,
+    cache-dir reads) and will
     naturally emit those container paths in MEDIA tags. These mounts are
     longer prefixes than the ``/root`` home mount, so longest-prefix matching
     picks the cache translation over the home translation for them.
@@ -1617,7 +1618,7 @@ def _translate_docker_container_media_path(candidate: Path) -> Optional[Path]:
     """Translate a container-absolute path to its host path when possible.
 
     Uses longest-prefix match across configured ``docker_volumes``, the
-    auto-mounted Hermes cache dirs (``/root/.hermes/...``), the default
+    auto-mounted Hermes cache dirs (``SANDBOX_HERMES_BASE/...``), the default
     persistent Docker ``/workspace`` host root, and the persistent ``/root``
     home mount.
     """
@@ -1642,17 +1643,35 @@ def _translate_docker_container_media_path(candidate: Path) -> Optional[Path]:
     if default_ws is not None and not any(c.as_posix() == "/workspace" for _, c in mounts):
         mounts.append((default_ws, Path("/workspace")))
     # Synthetic /root mount for the persistent home bind. Cache mounts above
-    # are longer prefixes, so /root/.hermes/... still translates to the host
-    # cache — this only catches stray home writes like /root/out.png.
+    # are longer prefixes, so SANDBOX_HERMES_BASE/... still translates to the
+    # host cache — this only catches stray home writes like /root/out.png.
     default_home = _docker_persistent_home_host_root()
     if default_home is not None and not any(c.as_posix() == "/root" for _, c in mounts):
-        # /root/.hermes/* that did NOT match a cache mount is the container's
-        # credential/secret surface (.env, auth.json, ... are individually
-        # bind-mounted from the real host stores). Translating those through
-        # the home mount would resolve to sandbox-home copies OUTSIDE the
-        # host-side credential denylist prefixes — refuse instead so the
-        # normal "container path doesn't exist on host" rejection applies.
-        if not candidate.as_posix().startswith("/root/.hermes"):
+        # SANDBOX_HERMES_BASE (and its pre-rename value) that did NOT match a
+        # cache mount is the container's credential/secret surface (.env,
+        # auth.json, ... are individually bind-mounted from the real host
+        # stores). Translating those through the home mount would resolve to
+        # sandbox-home copies OUTSIDE the host-side credential denylist
+        # prefixes — refuse instead so the normal "container path doesn't
+        # exist on host" rejection applies.
+        #
+        # Both the current base AND the pre-rename "/root/.hermes" are
+        # checked HERE PERMANENTLY, not just during a migration window. A
+        # persistent container created before the Спека 18 rename keeps
+        # mounting its credential surface at the old base until it is
+        # recreated, so dropping the old-base branch once the rest of the
+        # code looks migrated would silently reopen this hole for any
+        # still-running old container. Do not delete it.
+        from tools.credential_files import (
+            LEGACY_SANDBOX_HERMES_BASE,
+            SANDBOX_HERMES_BASE,
+        )
+
+        candidate_posix = candidate.as_posix()
+        if not (
+            candidate_posix.startswith(SANDBOX_HERMES_BASE)
+            or candidate_posix.startswith(LEGACY_SANDBOX_HERMES_BASE)
+        ):
             mounts.append((default_home, Path("/root")))
 
     if not mounts:

@@ -13,6 +13,14 @@ Two sources feed the allowlist:
 2. **User config** — ``terminal.env_passthrough`` in config.yaml lets users
    explicitly allowlist vars for non-skill use cases.
 
+A third, always-on source sits alongside both: :data:`BUILTIN_PASSTHROUGH_NAMES`
+(Спека 17, Ruling 1) — the client's outbound proxy settings. Those are network
+configuration, not secrets, and unlike the two sources above they are wired
+into both :func:`is_env_passthrough` and :func:`get_all_passthrough` directly
+(bypassing the skill/config registration paths and their provider-credential
+blocklist filtering) so they can never be stripped, disabled, or forgotten by
+a stale config.yaml.
+
 Both ``code_execution_tool.py`` and ``tools/environments/local.py`` consult
 :func:`is_env_passthrough` before stripping a variable.
 When profile multiplexing is active, their forwarded values are resolved
@@ -27,6 +35,24 @@ from typing import Iterable
 from hermes_cli.config import cfg_get
 
 logger = logging.getLogger(__name__)
+
+# Client-configured outbound proxy settings (Спека 17 / Ruling 1). Deployment
+# network configuration, not a secret — deliberately always allowed through to
+# both sandboxes (execute_code and terminal) regardless of skills or
+# config.yaml, so an already-installed machine picks this up with no template
+# change and no restart (`_config_passthrough` below is cached for the life of
+# the process; this constant needs no such cache since it never changes).
+#
+# CLOSED LIST: every name added here is a new hole in the sandbox's
+# environment-scrubbing guarantee (GHSA-rhgp-j443-p4rf) and needs its own
+# review — do not add names to this set incidentally alongside an unrelated
+# change. ALL_PROXY/all_proxy is included deliberately (owner decision on
+# review) even though nothing in-tree defaults to SOCKS, because this list is
+# closed and cannot be extended later without a new spec.
+BUILTIN_PASSTHROUGH_NAMES: frozenset[str] = frozenset({
+    "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY",
+    "http_proxy", "https_proxy", "all_proxy", "no_proxy",
+})
 
 # Session-scoped set of env var names that should pass through to sandboxes.
 # Backed by ContextVar to prevent cross-session data bleed in the gateway pipeline.
@@ -166,17 +192,21 @@ def _load_config_passthrough() -> frozenset[str]:
 def is_env_passthrough(var_name: str) -> bool:
     """Check whether *var_name* is allowed to pass through to sandboxes.
 
-    Returns ``True`` if the variable was registered by a skill or listed in
-    the user's ``tools.env_passthrough`` config.
+    Returns ``True`` if the variable is one of the always-on built-in names
+    (:data:`BUILTIN_PASSTHROUGH_NAMES`), was registered by a skill, or is
+    listed in the user's ``tools.env_passthrough`` config.
     """
+    if var_name in BUILTIN_PASSTHROUGH_NAMES:
+        return True
     if var_name in _get_allowed():
         return True
     return var_name in _load_config_passthrough()
 
 
 def get_all_passthrough() -> frozenset[str]:
-    """Return the union of skill-registered and config-based passthrough vars."""
-    return frozenset(_get_allowed()) | _load_config_passthrough()
+    """Return the union of built-in, skill-registered, and config-based
+    passthrough vars."""
+    return BUILTIN_PASSTHROUGH_NAMES | frozenset(_get_allowed()) | _load_config_passthrough()
 
 
 def resolve_passthrough_value(

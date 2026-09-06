@@ -46,6 +46,29 @@ class TestClassifySandboxMirrorTarget:
         )
         assert result["inner_path"] == "profiles/group1/SOUL.md"
 
+    def test_new_sandbox_base_name_classified(self, tmp_path):
+        """Спека 18: the sandbox home mirror is now named ``.trix``
+        (SANDBOX_HERMES_BASE's basename), not ``.hermes``. The detector must
+        accept the new name — it does NOT stop matching just because the
+        rest of the code moved off the old base."""
+        from agent.file_safety import classify_sandbox_mirror_target
+
+        target = (
+            tmp_path
+            / "profiles" / "group1"
+            / "sandboxes" / "docker" / "default" / "home" / ".trix"
+            / "profiles" / "group1" / "SOUL.md"
+        )
+        target.parent.mkdir(parents=True)
+        target.write_text("# mirror copy\n")
+
+        result = classify_sandbox_mirror_target(str(target))
+        assert result is not None
+        assert result["mirror_root"].endswith(
+            "sandboxes/docker/default/home/.trix"
+        )
+        assert result["inner_path"] == "profiles/group1/SOUL.md"
+
     @pytest.mark.parametrize(
         "backend,inner",
         [
@@ -111,6 +134,27 @@ class TestGetSandboxMirrorWarning:
         # Must hint at what the agent likely meant.
         assert "profiles/group1/SOUL.md" in warn
         # Must name the bypass kwarg shared with the cross-profile guard.
+        assert "cross_profile=True" in warn
+
+    def test_mirror_warning_fires_on_new_sandbox_base_name(self, tmp_path):
+        """Спека 18 acceptance criterion 6: the warning must keep firing on
+        the renamed mirror path (``home/.trix/...``), not just the pre-rename
+        ``home/.hermes/...`` shape."""
+        from agent.file_safety import get_sandbox_mirror_warning
+
+        target = (
+            tmp_path
+            / "profiles" / "group1"
+            / "sandboxes" / "docker" / "default" / "home" / ".trix"
+            / "profiles" / "group1" / "SOUL.md"
+        )
+        target.parent.mkdir(parents=True)
+        target.write_text("# mirror copy\n")
+
+        warn = get_sandbox_mirror_warning(str(target))
+        assert warn is not None
+        assert "sandboxes/docker/default/home/.trix" in warn
+        assert "profiles/group1/SOUL.md" in warn
         assert "cross_profile=True" in warn
 
     def test_warning_is_defense_in_depth_not_boundary(self, tmp_path):

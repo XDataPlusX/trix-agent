@@ -983,6 +983,8 @@ def _active_terminal_env(task_id: str | None):
 
 
 def _agent_cache_base_for_env(env: Any) -> str | None:
+    from tools.credential_files import SANDBOX_HERMES_BASE
+
     if env is not None:
         # Forward-looking optional override: an environment may expose its own
         # agent-visible cache root via this callable. No backend defines it yet
@@ -1003,7 +1005,7 @@ def _agent_cache_base_for_env(env: Any) -> str | None:
 
         env_name = env.__class__.__name__
         if env_name in {"DockerEnvironment", "SingularityEnvironment", "ModalEnvironment"}:
-            return "/root/.hermes"
+            return SANDBOX_HERMES_BASE
 
     # If no environment has been created yet, only backends with deterministic
     # Hermes cache roots can be translated without side effects. SSH can still
@@ -1011,7 +1013,7 @@ def _agent_cache_base_for_env(env: Any) -> str | None:
     # the cache file before the first command runs.
     backend = (os.getenv("TERMINAL_ENV") or "local").strip().lower()
     if backend in {"docker", "singularity", "modal"}:
-        return "/root/.hermes"
+        return SANDBOX_HERMES_BASE
     if backend == "ssh":
         return "~/.hermes"
     return None

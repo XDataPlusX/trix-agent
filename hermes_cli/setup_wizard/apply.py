@@ -520,15 +520,17 @@ def apply_settings(form: dict) -> dict:
     simply where this whole class of "point the runtime at a local
     server" values lives).
 
-    ``proxy`` (variant A, owner-approved) writes THREE things when
-    non-empty: ``TELEGRAM_PROXY`` (unchanged, Telegram-only), plus
-    ``HTTPS_PROXY`` so the whole runtime — model providers, web
-    search/extract, every outbound HTTPS call — routes through the same
-    proxy, plus a merged ``NO_PROXY`` that keeps ``_DIRECT_HOSTS``
-    (hosts reachable straight from an RU-hosted VM) routed directly
-    on top of whatever the user already had there — never a wholesale
+    ``proxy`` (variant A, owner-approved; Спека 17 Ruling 6 for the
+    lowercase/HTTP additions) writes SEVEN things when non-empty:
+    ``TELEGRAM_PROXY`` (unchanged, Telegram-only), plus ``HTTPS_PROXY`` /
+    ``https_proxy`` / ``HTTP_PROXY`` / ``http_proxy`` so the whole runtime —
+    model providers, web search/extract, every outbound HTTPS *and* HTTP
+    call, in both env-var cases — routes through the same proxy, plus a
+    merged ``NO_PROXY`` / ``no_proxy`` that keeps ``_DIRECT_HOSTS`` (hosts
+    reachable straight from an RU-hosted VM) routed directly on top of
+    whatever the user already had there — never a wholesale
     overwrite. An empty/missing ``proxy`` is the same no-op it always
-    was: none of the three are touched.
+    was: none of the seven are touched.
 
     Returns ``{"ok": bool, "written": [...], "removed": [...], "errors":
     [...]}`` — ``ok`` is ``not errors``. Order (spec §13):
@@ -664,15 +666,32 @@ def apply_settings(form: dict) -> dict:
         # way Telegram reads TELEGRAM_PROXY. NO_PROXY is never overwritten
         # wholesale — only guaranteed to still carry the hosts that are
         # reachable directly from an RU-hosted VM (see _DIRECT_HOSTS), on
-        # top of whatever the user already has there.
+        # top of whatever the user already had there.
+        #
+        # Спека 17, Ruling 6: both HTTPS and HTTP, both cases. The sandbox
+        # (`docker exec`) forwards the process env by name, unchanged — most
+        # *nix tools (curl included) read the lowercase form, and without
+        # HTTP_PROXY a plain-http request from the sandbox still leaves
+        # direct. TELEGRAM_PROXY above is left alone; it's Telegram's own
+        # separate knob.
         _write_secret("HTTPS_PROXY", proxy, written, errors, "HTTPS-прокси")
-        current_no_proxy = load_env().get("NO_PROXY", "")
+        _write_secret("https_proxy", proxy, written, errors, "HTTPS-прокси (строчными)")
+        _write_secret("HTTP_PROXY", proxy, written, errors, "HTTP-прокси")
+        _write_secret("http_proxy", proxy, written, errors, "HTTP-прокси (строчными)")
+        current_env = load_env()
         _write_secret(
             "NO_PROXY",
-            _merge_no_proxy_hosts(current_no_proxy),
+            _merge_no_proxy_hosts(current_env.get("NO_PROXY", "")),
             written,
             errors,
             "список прямых хостов (NO_PROXY)",
+        )
+        _write_secret(
+            "no_proxy",
+            _merge_no_proxy_hosts(current_env.get("no_proxy", "")),
+            written,
+            errors,
+            "список прямых хостов (no_proxy, строчными)",
         )
 
     if provider_name and provider.get("env_var") and provider.get("api_key"):

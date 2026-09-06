@@ -146,8 +146,8 @@ def test_binary_reference_block_maps_host_attachment_to_container_path(tmp_path:
     )
 
     assert result.expanded
-    # Default container base for the docker backend is /root/.hermes.
-    assert "/root/.hermes/attachments/archive.zip" in result.message
+    # Default container base for the docker backend is SANDBOX_HERMES_BASE.
+    assert "/root/.trix/attachments/archive.zip" in result.message
     assert "binary file, not inlined" in result.message
 
 
@@ -173,6 +173,7 @@ def test_binary_reference_block_keeps_host_path_on_local_backend(tmp_path: Path,
     assert result.expanded
     assert str(payload) in result.message
     assert "/root/.hermes/attachments/" not in result.message
+    assert "/root/.trix/attachments/" not in result.message
 
 
 

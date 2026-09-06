@@ -178,8 +178,8 @@ class _FakeSDK:
 def _cwd_result(body: str = "", *, cwd: str = "/vercel/sandbox", exit_code: int = 0):
     def _result(_cmd: str, args: list[str], _kwargs: dict):
         script = args[1] if len(args) > 1 else ""
-        match = re.search(r"__HERMES_CWD_[A-Za-z0-9]+__", script)
-        marker = match.group(0) if match else "__HERMES_CWD_MISSING__"
+        match = re.search(r"__TRIX_CWD_[A-Za-z0-9]+__", script)
+        marker = match.group(0) if match else "__TRIX_CWD_MISSING__"
         prefix = f"{body}\n\n" if body else "\n"
         return _FakeRunResult(f"{prefix}{marker}{cwd}{marker}\n", exit_code)
 
@@ -296,7 +296,7 @@ class TestFileSync:
             lambda: [
                 {
                     "host_path": str(src),
-                    "container_path": "/root/.hermes/credentials/token.txt",
+                    "container_path": "/root/.trix/credentials/token.txt",
                 }
             ],
         )
@@ -323,7 +323,7 @@ class TestFileSync:
             lambda: [
                 {
                     "host_path": str(src),
-                    "container_path": "/root/.hermes/credentials/token.txt",
+                    "container_path": "/root/.trix/credentials/token.txt",
                 }
             ],
         )
@@ -357,7 +357,7 @@ class TestFileSync:
             lambda: [
                 {
                     "host_path": str(src),
-                    "container_path": "/root/.hermes/credentials/token.txt",
+                    "container_path": "/root/.trix/credentials/token.txt",
                 }
             ],
         )
@@ -406,7 +406,7 @@ class TestFileSync:
             lambda: [
                 {
                     "host_path": str(src),
-                    "container_path": "/root/.hermes/credentials/token.txt",
+                    "container_path": "/root/.trix/credentials/token.txt",
                 }
             ],
         )

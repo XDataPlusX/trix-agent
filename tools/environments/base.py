@@ -500,7 +500,7 @@ class _ThreadedProcessHandle:
 
 
 def _cwd_marker(session_id: str) -> str:
-    return f"__HERMES_CWD_{session_id}__"
+    return f"__TRIX_CWD_{session_id}__"
 
 
 # Per-session variables that the gateway bridges freshly onto every command's
@@ -620,7 +620,11 @@ class BaseEnvironment(ABC):
 
         self._session_id = uuid.uuid4().hex[:12]
         temp_dir = self.get_temp_dir().rstrip("/") or "/"
-        self._snapshot_path = f"{temp_dir}/hermes-snap-{self._session_id}.sh"
+        # Имя файла — часть того, что видит модель: снимок лежит в /tmp
+        # ВНУТРИ песочницы, и любой `ls /tmp` показывал бы ей чужое имя
+        # продукта (Спека 18: модель читает свою файловую систему как
+        # улику собственной личности).
+        self._snapshot_path = f"{temp_dir}/trix-snap-{self._session_id}.sh"
         self._cwd_file = f"{temp_dir}/hermes-cwd-{self._session_id}.txt"
         self._cwd_marker = _cwd_marker(self._session_id)
         self._snapshot_ready = False
@@ -672,6 +676,21 @@ class BaseEnvironment(ABC):
         """
         if not self._profile_scoped_passthrough:
             return ()
+        try:
+            # Built-in proxy names (Спека 17, Ruling 2) are excluded
+            # UNCONDITIONALLY — not only under active multiplexing. They are
+            # re-injected fresh on every command via the runtime `-e` args
+            # (_build_runtime_env_args_with_unsets), so a value baked into the
+            # shared `export -p` snapshot only ever works against freshness:
+            # a single-profile client changing their proxy would otherwise
+            # have the old value win once it lands in the snapshot.
+            from tools.env_passthrough import BUILTIN_PASSTHROUGH_NAMES
+            self._snapshot_passthrough_names.update(BUILTIN_PASSTHROUGH_NAMES)
+        except Exception:
+            logger.debug(
+                "Could not seed built-in proxy snapshot exclusions",
+                exc_info=True,
+            )
         try:
             from agent.secret_scope import is_multiplex_active
             if is_multiplex_active():
@@ -737,11 +756,11 @@ class BaseEnvironment(ABC):
         # letters, spaces) and the resulting path lives in a shell variable so
         # every later expansion is consistent.
         _snap_tmp_template = self._quote_shell_path(self._snapshot_path + ".tmp.XXXXXXXXXX")
-        _snap_tmp = '"$__hermes_snap_tmp"'
+        _snap_tmp = '"$__trix_snap_tmp"'
         snapshot_excluded = self._snapshot_excluded_passthrough_names()
         bootstrap = (
             f"umask 077\n"
-            f"__hermes_snap_tmp=$(mktemp {_snap_tmp_template}) || exit 1\n"
+            f"__trix_snap_tmp=$(mktemp {_snap_tmp_template}) || exit 1\n"
             f"{_export_dump_excluding_session_vars(_snap_tmp, snapshot_excluded)}\n"
             # Dump function definitions, filtering out private (``_``-prefixed)
             # helpers — mainly bash-completion internals (``_git``, ``_make``…)
@@ -755,8 +774,8 @@ class BaseEnvironment(ABC):
             # ``declare -f`` with no name args dumps ALL functions, so an empty
             # name list (only private funcs present) would otherwise leak the
             # very functions we meant to drop.
-            f"__hermes_fns=$(declare -F | awk '{{print $3}}' | grep -vE '^_[^_]') || true\n"
-            f"[ -n \"$__hermes_fns\" ] && declare -f $__hermes_fns "
+            f"__trix_fns=$(declare -F | awk '{{print $3}}' | grep -vE '^_[^_]') || true\n"
+            f"[ -n \"$__trix_fns\" ] && declare -f $__trix_fns "
             f">> {_snap_tmp} 2>/dev/null || true\n"
             f"alias -p >> {_snap_tmp}\n"
             f"echo 'shopt -s expand_aliases' >> {_snap_tmp}\n"
@@ -856,7 +875,7 @@ class BaseEnvironment(ABC):
         # is shared by ``&``-launched subshells.  Template shell-quoted
         # (Windows/spaces); the allocated path lives in a shell variable.
         _snap_tmp_template = self._quote_shell_path(self._snapshot_path + ".tmp.XXXXXXXXXX")
-        _snap_tmp = '"$__hermes_snap_tmp"'
+        _snap_tmp = '"$__trix_snap_tmp"'
 
         parts = []
         passthrough_names = self._snapshot_excluded_passthrough_names()
@@ -868,7 +887,7 @@ class BaseEnvironment(ABC):
         # string, so secrets are not exposed through process arguments/logs.
         saved_names: list[tuple[str, str, str]] = []
         for name in passthrough_names:
-            marker = f"_HERMES_RUNTIME_PASSTHROUGH_{name}"
+            marker = f"_TRIX_RUNTIME_PASSTHROUGH_{name}"
             present = f"{marker}_PRESENT"
             value = f"{marker}_VALUE"
             saved_names.append((name, present, value))
@@ -893,22 +912,26 @@ class BaseEnvironment(ABC):
             )
             parts.append(f"unset {present} {value}")
 
-        # Harness attribution: every tool subprocess advertises that it runs
-        # under Hermes via the cross-agent ``AI_AGENT`` standard (read by e.g.
-        # huggingface_hub's agent detection) plus the Hermes-specific
-        # ``HERMES_AGENT`` marker.  The value MUST equal our id in the public
-        # agent-harness registry (``hermes-agent`` — see huggingface.js
-        # ``agent-harnesses.ts``); standard-var matching is exact, so any other
-        # value is reported as "unknown".  Setting it here (rather than only in
-        # the host process env) is what carries the marker into REMOTE backends
-        # (Docker/SSH/Modal/Daytona/Singularity/Vercel), whose exec env is not
-        # inherited from the Hermes process.  ``${VAR:-default}`` semantics:
-        # never clobber an outer harness value that arrived via the inherited
-        # process env (Hermes running inside another agent's terminal).
-        parts.append(
-            'export AI_AGENT="${AI_AGENT:-hermes-agent}" '
-            'HERMES_AGENT="${HERMES_AGENT:-true}"'
-        )
+        # Harness attribution deliberately NOT re-exported here (Спека 18).
+        #
+        # Upstream sets AI_AGENT / HERMES_AGENT on every wrapped command
+        # specifically so the marker reaches REMOTE backends, whose exec env
+        # is not inherited from the Hermes process. For Trix that export is
+        # the cost, not the benefit: it puts the literal string
+        # ``hermes-agent`` into the sandbox environment, where the model
+        # reads it with a bare ``env`` and correctly concludes it is Hermes —
+        # the exact defect Спека 18 exists to close, and the one channel that
+        # survived renaming the sandbox base to ``/root/.trix``.
+        #
+        # What is given up is narrow: third-party libraries running INSIDE
+        # the client's sandbox (huggingface_hub's agent detection) no longer
+        # learn which harness invoked them. That is outbound attribution
+        # from the client's own machine, which this product does not do
+        # anyway (Спека 1 closed every upload path to Nous Research).
+        #
+        # The host process still sets both (gateway/run.py), so the LOCAL
+        # backend keeps the marker through ordinary env inheritance, and an
+        # outer harness's value is still never clobbered.
 
         # Preserve bare ``~`` expansion, but rewrite ``~/...`` through
         # ``$HOME`` so suffixes with spaces remain a single shell word.
@@ -918,7 +941,7 @@ class BaseEnvironment(ABC):
 
         # Run the actual command
         parts.append(f"eval '{escaped}'")
-        parts.append("__hermes_ec=$?")
+        parts.append("__trix_ec=$?")
         # Restrict Hermes metadata files without changing the user's command
         # umask. Snapshot files may contain env-carried secrets.
         parts.append("umask 077")
@@ -933,7 +956,7 @@ class BaseEnvironment(ABC):
         # that later expands the ``mv`` operand, keeping both consistent.
         if self._snapshot_ready:
             parts.append(
-                f"__hermes_snap_tmp=$(mktemp {_snap_tmp_template}) && "
+                f"__trix_snap_tmp=$(mktemp {_snap_tmp_template}) && "
                 f"{{ {_export_dump_excluding_session_vars(_snap_tmp, passthrough_names)} "
                 f"&& mv -f {_snap_tmp} {_quoted_snap}; }} "
                 f"2>/dev/null || rm -f {_snap_tmp} 2>/dev/null || true"
@@ -948,7 +971,7 @@ class BaseEnvironment(ABC):
         parts.append(
             f"printf '\\n{self._cwd_marker}%s{self._cwd_marker}\\n' \"$(pwd -P)\""
         )
-        parts.append("exit $__hermes_ec")
+        parts.append("exit $__trix_ec")
 
         return "\n".join(parts)
 
@@ -1329,7 +1352,7 @@ class BaseEnvironment(ABC):
         self._extract_cwd_from_output(result)
 
     def _extract_cwd_from_output(self, result: dict):
-        """Parse the __HERMES_CWD_{session}__ marker from stdout output.
+        """Parse the __TRIX_CWD_{session}__ marker from stdout output.
 
         Updates self.cwd and strips the marker from result["output"].
         Used by remote backends (Docker, SSH, Modal, Daytona, Singularity).

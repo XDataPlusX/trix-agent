@@ -114,6 +114,14 @@ _GLOBAL_ENV_EXACT = frozenset({
     # profile-scoped.
     "API_SERVER_ENABLED", "API_SERVER_HOST", "API_SERVER_PORT",
     "API_SERVER_CORS_ORIGINS",
+    # Outbound proxy address (Спека 17, Ruling 5) — a machine/deployment
+    # setting (which network egress point to use), not a per-profile
+    # credential. Without this, resolve_passthrough_value()'s unscoped
+    # get_secret() call raises UnscopedSecretError on every docker command
+    # once tools.env_passthrough.BUILTIN_PASSTHROUGH_NAMES makes these
+    # implicitly forwarded under active multiplexing.
+    "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY",
+    "http_proxy", "https_proxy", "all_proxy", "no_proxy",
 })
 _GLOBAL_ENV_PREFIXES = (
     "HERMES_KANBAN_",

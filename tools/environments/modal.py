@@ -282,8 +282,10 @@ class ModalEnvironment(BaseEnvironment):
 
         logger.info("Modal: sandbox created (task=%s)", self._task_id)
 
+        from tools.credential_files import SANDBOX_HERMES_BASE
+
         self._sync_manager = FileSyncManager(
-            get_files_fn=lambda: iter_sync_files("/root/.hermes"),
+            get_files_fn=lambda: iter_sync_files(SANDBOX_HERMES_BASE),
             upload_fn=self._modal_upload,
             delete_fn=self._modal_delete,
             bulk_upload_fn=self._modal_bulk_upload,
@@ -367,14 +369,24 @@ class ModalEnvironment(BaseEnvironment):
         self._worker.run_coroutine(_bulk(), timeout=120)
 
     def _modal_bulk_download(self, dest: Path) -> None:
-        """Download remote .hermes/ as a tar archive.
+        """Download the remote sandbox-state directory as a tar archive.
 
-        Modal sandboxes always run as root, so /root/.hermes is hardcoded
-        (consistent with iter_sync_files call on line 269).
+        Modal sandboxes always run as root, so ``SANDBOX_HERMES_BASE`` (the
+        same base passed to ``iter_sync_files`` above) is hardcoded here —
+        it must stay in sync with that call: ``_sync_back_impl`` matches
+        each tar entry's path (rebuilt as ``/<entry>``) against the
+        ``iter_sync_files`` mapping, so tarring the wrong base would silently
+        produce a sync-back that matches nothing (#Спека 18 caught this
+        during the ``/root/.hermes`` -> ``SANDBOX_HERMES_BASE`` rename: only
+        this shell command still hardcoded the old directory name).
         """
+        from tools.credential_files import SANDBOX_HERMES_BASE
+
+        relative_base = SANDBOX_HERMES_BASE.lstrip("/")
+
         async def _download():
             proc = await self._sandbox.exec.aio(
-                "bash", "-c", "tar cf - -C / root/.hermes"
+                "bash", "-c", f"tar cf - -C / {relative_base}"
             )
             data = await proc.stdout.read.aio()
             exit_code = await proc.wait.aio()

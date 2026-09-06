@@ -1390,6 +1390,53 @@ def test_update_prints_the_notice_when_it_seeds_ports(client_config, monkeypatch
     assert "пересоздайте песочницу" in out.lower()
 
 
+class TestMigrateSandboxHermesBaseWiring:
+    """Спека 18, Ruling 5 — ``hermes update`` must run the sandbox migration
+    itself: the client has no shell to remove the stale container or the
+    stale host-side ``.hermes`` mirror directory."""
+
+    def test_prints_notice_when_migration_removed_something(self, capsys, monkeypatch):
+        from hermes_cli.update_cmd import _migrate_sandbox_hermes_base
+
+        monkeypatch.setattr(
+            "tools.environments.docker.migrate_sandbox_hermes_base",
+            lambda: {"containers_removed": 1, "host_dirs_removed": ["/x/home/.hermes"]},
+        )
+
+        _migrate_sandbox_hermes_base(quiet=False)
+
+        out = capsys.readouterr().out
+        assert "1" in out
+
+    def test_silent_when_there_was_nothing_to_migrate(self, capsys, monkeypatch):
+        """A machine with no Docker sandbox, or one already migrated, prints
+        nothing — this call is unconditional on every ``hermes update``."""
+        from hermes_cli.update_cmd import _migrate_sandbox_hermes_base
+
+        monkeypatch.setattr(
+            "tools.environments.docker.migrate_sandbox_hermes_base",
+            lambda: {"containers_removed": 0, "host_dirs_removed": []},
+        )
+
+        _migrate_sandbox_hermes_base(quiet=False)
+
+        assert capsys.readouterr().out == ""
+
+    def test_never_raises_and_never_breaks_update(self, capsys, monkeypatch):
+        """Best-effort: a Docker/filesystem failure inside the migration must
+        not propagate and break ``hermes update``."""
+        from hermes_cli.update_cmd import _migrate_sandbox_hermes_base
+
+        def _boom():
+            raise RuntimeError("docker daemon unreachable")
+
+        monkeypatch.setattr(
+            "tools.environments.docker.migrate_sandbox_hermes_base", _boom,
+        )
+
+        _migrate_sandbox_hermes_base(quiet=False)  # must not raise
+
+
 def _run_doctor_sync(config_path):
     """Прогнать досев ровно так, как его зовёт ``hermes doctor --fix``."""
     from hermes_cli.doctor import _sync_trix_config_sections

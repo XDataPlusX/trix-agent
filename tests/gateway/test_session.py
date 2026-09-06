@@ -256,7 +256,11 @@ class TestBuildSessionContextPrompt:
         assert "current turn's sender prefix" not in prompt
 
 
-    def test_local_delivery_path_uses_display_hermes_home(self):
+    def test_local_delivery_option_carries_no_hermes_path(self):
+        """Спека 18: this line reaches every gateway session's system prompt
+        before any file the agent could inspect — it must not leak the host
+        HERMES_HOME path (or the word "hermes"), even though the agent can't
+        reach that path from inside the sandbox anyway."""
         config = GatewayConfig()
         source = SessionSource(
             platform=Platform.LOCAL, chat_id="cli",
@@ -264,10 +268,10 @@ class TestBuildSessionContextPrompt:
         )
         ctx = build_session_context(source, config)
 
-        with patch("hermes_constants.display_hermes_home", return_value="~/.hermes/profiles/coder"):
-            prompt = build_session_context_prompt(ctx)
+        prompt = build_session_context_prompt(ctx)
 
-        assert "~/.hermes/profiles/coder/cron/output/" in prompt
+        assert "\"local\"" in prompt
+        assert "hermes" not in prompt.lower()
 
 
     def test_prompt_quotes_untrusted_metadata_labels(self):

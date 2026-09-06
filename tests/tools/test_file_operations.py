@@ -327,7 +327,7 @@ class TestShellFileOpsHelpers:
             "if [ -f '/c/Users/alice/notes.txt' ]; "
             "then wc -c < '/c/Users/alice/notes.txt' 2>/dev/null; "
             "elif [ -e '/c/Users/alice/notes.txt' ]; "
-            "then echo __hermes_not_regular__; "
+            "then echo __trix_not_regular__; "
             "else exit 1; fi"
         )
         assert commands[1] == "head -c 1000 '/c/Users/alice/notes.txt' 2>/dev/null | base64"

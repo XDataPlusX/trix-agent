@@ -1017,6 +1017,8 @@ def _check_approval_required_write(paths: list[str],
 
 def _get_container_mirror_prefix_for_task(task_id: str = "default") -> str | None:
     """Return the container-side Hermes mirror prefix for Docker file tools."""
+    from tools.credential_files import SANDBOX_HERMES_BASE
+
     try:
         from tools.terminal_tool import (
             _active_environments,
@@ -1037,7 +1039,7 @@ def _get_container_mirror_prefix_for_task(task_id: str = "default") -> str | Non
             if env.__class__.__name__ == "DockerEnvironment" and bool(
                 getattr(env, "_persistent", False)
             ):
-                return "/root/.hermes"
+                return SANDBOX_HERMES_BASE
             return None
 
         config = _get_env_config()
@@ -1045,7 +1047,7 @@ def _get_container_mirror_prefix_for_task(task_id: str = "default") -> str | Non
         return None
 
     if config.get("env_type") == "docker" and config.get("container_persistent", True):
-        return "/root/.hermes"
+        return SANDBOX_HERMES_BASE
     return None
 
 

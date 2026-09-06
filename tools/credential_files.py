@@ -35,6 +35,23 @@ except ImportError:  # noqa: F401 - sentinel consumed in register_credential_fil
 
 logger = logging.getLogger(__name__)
 
+# Base directory for the agent's own state inside remote sandboxes (Docker,
+# Modal, ...). Deliberately named after the *product* (Trix), not the
+# underlying Hermes codebase: the model reads its own filesystem as evidence
+# of its identity, and a `.hermes` directory in its home told it it was
+# Hermes even though every prompt and doc said Trix (Спека 18). Keeps the
+# same shape (a hidden dir under the sandbox's home) so nothing else about
+# path resolution needs to change.
+SANDBOX_HERMES_BASE = "/root/.trix"
+
+# The pre-rename base. Still checked (never just replaced) wherever a
+# security guard needs to refuse translating through it — see the
+# `gateway/platforms/base.py` and `agent/file_safety.py` guards that import
+# this alongside SANDBOX_HERMES_BASE. A persistent container created before
+# the rename keeps this base until it is recreated, so the guard must accept
+# it permanently, not "during a migration window".
+LEGACY_SANDBOX_HERMES_BASE = "/root/.hermes"
+
 # Session-scoped list of credential files to mount.
 # Backed by ContextVar to prevent cross-session data bleed in the gateway pipeline.
 _registered_files_var: ContextVar[Dict[str, str]] = ContextVar("_registered_files")
@@ -61,7 +78,7 @@ def _resolve_hermes_home() -> Path:
 
 def register_credential_file(
     relative_path: str,
-    container_base: str = "/root/.hermes",
+    container_base: str = SANDBOX_HERMES_BASE,
 ) -> bool:
     """Register a credential file for mounting into remote sandboxes.
 
@@ -150,7 +167,7 @@ def register_credential_file(
 
 def register_credential_files(
     entries: list,
-    container_base: str = "/root/.hermes",
+    container_base: str = SANDBOX_HERMES_BASE,
 ) -> List[str]:
     """Register multiple credential files from skill frontmatter entries.
 
@@ -206,7 +223,7 @@ def _load_config_files() -> List[Dict[str, str]]:
                         continue
                     resolved_path = host_path.resolve()
                     if resolved_path.is_file():
-                        container_path = f"/root/.hermes/{rel}"
+                        container_path = f"{SANDBOX_HERMES_BASE}/{rel}"
                         result.append({
                             "host_path": str(resolved_path),
                             "container_path": container_path,
@@ -245,7 +262,7 @@ def get_credential_file_mounts() -> List[Dict[str, str]]:
 
 
 def get_skills_directory_mount(
-    container_base: str = "/root/.hermes",
+    container_base: str = SANDBOX_HERMES_BASE,
 ) -> list[Dict[str, str]]:
     """Return mount info for all skill directories (local + external).
 
@@ -336,7 +353,7 @@ def _safe_skills_path(skills_dir: Path) -> str:
 
 
 def iter_skills_files(
-    container_base: str = "/root/.hermes",
+    container_base: str = SANDBOX_HERMES_BASE,
 ) -> List[Dict[str, str]]:
     """Yield individual (host_path, container_path) entries for skills files.
 
@@ -409,7 +426,7 @@ _CACHE_DIRS: list[tuple[str, str]] = [
 
 
 def get_cache_directory_mounts(
-    container_base: str = "/root/.hermes",
+    container_base: str = SANDBOX_HERMES_BASE,
 ) -> List[Dict[str, str]]:
     """Return mount entries for each cache directory that exists on disk.
 
@@ -446,14 +463,15 @@ def get_cache_directory_mounts(
 
 def map_cache_path_to_container(
     host_path: str,
-    container_base: str = "/root/.hermes",
+    container_base: str = SANDBOX_HERMES_BASE,
 ) -> Optional[str]:
     """Map a host cache path to its mounted path under *container_base*.
 
     Returns the POSIX container path when *host_path* lives under one of the
     auto-mounted cache directories, otherwise ``None``.  Backend-agnostic: the
-    caller decides which ``container_base`` applies (Docker ``/root/.hermes``,
-    SSH ``<remote_home>/.hermes``, etc.) and whether translation is wanted.
+    caller decides which ``container_base`` applies (Docker
+    ``SANDBOX_HERMES_BASE``, SSH ``<remote_home>/.hermes``, etc.) and whether
+    translation is wanted.
     Always joins with ``posixpath`` because container/remote paths are POSIX
     regardless of the host OS.
     """
@@ -470,7 +488,7 @@ def map_cache_path_to_container(
 
 def from_agent_visible_cache_path(
     container_path: str,
-    container_base: str = "/root/.hermes",
+    container_base: str = SANDBOX_HERMES_BASE,
 ) -> str:
     """Translate a sandbox/container cache path back to its host path.
 
@@ -494,7 +512,7 @@ def from_agent_visible_cache_path(
 
 def to_agent_visible_cache_path(
     host_path: str,
-    container_base: str = "/root/.hermes",
+    container_base: str = SANDBOX_HERMES_BASE,
 ) -> str:
     """Translate a host cache path to its mounted path inside the sandbox.
 
@@ -507,7 +525,7 @@ def to_agent_visible_cache_path(
     backend's Hermes cache lands):
 
     * docker / modal — bind-mounted (docker) or per-file-synced (modal) at
-      ``/root/.hermes`` (the *container_base* default).
+      ``SANDBOX_HERMES_BASE`` (the *container_base* default).
     * ssh / daytona / vercel_sandbox — file-synced under the remote user's
       home; ``~/.hermes`` is shell-expanded by the remote shell, so tool
       commands resolve it regardless of the actual remote home. Previously
@@ -522,7 +540,7 @@ def to_agent_visible_cache_path(
     """
     backend = (os.environ.get("TERMINAL_ENV") or "local").strip().lower()
     if backend in ("docker", "modal"):
-        pass  # /root/.hermes default
+        pass  # SANDBOX_HERMES_BASE default
     elif backend in ("ssh", "daytona", "vercel_sandbox"):
         container_base = "~/.hermes"
     else:
@@ -533,7 +551,7 @@ def to_agent_visible_cache_path(
 
 
 def iter_cache_files(
-    container_base: str = "/root/.hermes",
+    container_base: str = SANDBOX_HERMES_BASE,
 ) -> List[Dict[str, str]]:
     """Return individual (host_path, container_path) entries for cache files.
 

@@ -159,3 +159,48 @@ class TestModalBulkUpload:
         with tarfile.open(fileobj=buf, mode="r:gz") as tar:
             names = tar.getnames()
             assert "root/.hermes/large.bin" in names
+
+
+class TestModalBulkDownload:
+    """Спека 18: ``_modal_bulk_download`` must tar the SAME base directory
+    ``_modal_bulk_upload``/``iter_sync_files`` use, or sync-back silently
+    matches nothing (the tar entries and the file-mapping remote paths would
+    disagree on the base directory name)."""
+
+    def test_tars_the_current_sandbox_hermes_base(self, monkeypatch, tmp_path):
+        from tools.credential_files import SANDBOX_HERMES_BASE
+
+        env = _make_mock_modal_env(monkeypatch, tmp_path)
+        exec_calls = []
+
+        async def mock_exec_fn(*args, **kwargs):
+            exec_calls.append(args)
+            proc = MagicMock()
+            proc.wait = MagicMock()
+            proc.wait.aio = AsyncMock(return_value=0)
+            proc.stdout = MagicMock()
+            proc.stdout.read = MagicMock()
+            proc.stdout.read.aio = AsyncMock(return_value=b"")
+            return proc
+
+        env._sandbox.exec = MagicMock()
+        env._sandbox.exec.aio = mock_exec_fn
+
+        def real_run_coroutine(coro, **kwargs):
+            loop = asyncio.new_event_loop()
+            try:
+                return loop.run_until_complete(coro)
+            finally:
+                loop.close()
+
+        env._worker.run_coroutine = real_run_coroutine
+
+        dest = tmp_path / "download.tar"
+        env._modal_bulk_download(dest)
+
+        assert len(exec_calls) == 1
+        cmd = exec_calls[0][2]
+        relative_base = SANDBOX_HERMES_BASE.lstrip("/")
+        assert cmd == f"tar cf - -C / {relative_base}"
+        # Must NOT have regressed to the pre-rename hardcoded directory name.
+        assert "root/.hermes" not in cmd

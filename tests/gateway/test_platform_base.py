@@ -58,9 +58,13 @@ class TestInboundMediaSizeCap:
 
 class TestSecretCaptureGuidance:
     def test_gateway_secret_capture_message_points_to_local_setup(self):
+        """Спека 18, Ruling 3: the messaging-only guidance must point the user
+        at the local CLI without leaking a host path (the client has no
+        shell to act on a path anyway)."""
         message = GATEWAY_SECRET_CAPTURE_UNSUPPORTED_MESSAGE
         assert "local cli" in message.lower()
-        assert "~/.hermes/.env" in message
+        assert "hermes" not in message.lower()
+        assert "~/" not in message
 
 
 class TestSafeUrlForLog:
@@ -877,7 +881,7 @@ class TestDockerContainerMediaPathTranslation:
         ) == str(media.resolve())
 
     def test_cache_dir_container_path_translates_to_host_cache(self, tmp_path, monkeypatch):
-        """MEDIA:/root/.hermes/cache/images/... (the agent_visible_image path
+        """MEDIA:/root/.trix/cache/images/... (the agent_visible_image path
         under docker) must translate to the HOST cache file, not the sandbox
         home copy."""
         hermes_home = tmp_path / ".hermes"
@@ -890,7 +894,7 @@ class TestDockerContainerMediaPathTranslation:
         monkeypatch.delenv("TERMINAL_DOCKER_VOLUMES", raising=False)
 
         assert BasePlatformAdapter.validate_media_delivery_path(
-            "/root/.hermes/cache/images/generated.png"
+            "/root/.trix/cache/images/generated.png"
         ) == str(media.resolve())
 
     def test_container_credential_path_never_translates_through_home(self, tmp_path, monkeypatch):
@@ -913,6 +917,32 @@ class TestDockerContainerMediaPathTranslation:
 
         assert BasePlatformAdapter.validate_media_delivery_path(
             "/root/.hermes/auth.json"
+        ) is None
+
+    def test_container_credential_path_never_translates_through_home_new_base(
+        self, tmp_path, monkeypatch
+    ):
+        """Спека 18, Ruling 2: the guard accepts BOTH the pre-rename base
+        (``/root/.hermes``, covered above) and the current SANDBOX_HERMES_BASE
+        (``/root/.trix``) PERMANENTLY — not during a migration window. A
+        naive "just swap the literal" fix would reopen this hole for the
+        pre-rename base; this test locks in that the new base is refused the
+        same way."""
+        sandbox = tmp_path / "sandboxes"
+        home = sandbox / "docker" / "default" / "home"
+        secret = home / ".trix"
+        secret.mkdir(parents=True)
+        (secret / "auth.json").write_text('{"token": "SECRET"}')
+        hermes_home = tmp_path / ".hermes"
+        hermes_home.mkdir()
+        monkeypatch.setenv("HERMES_HOME", str(hermes_home))
+        monkeypatch.setenv("TERMINAL_ENV", "docker")
+        monkeypatch.setenv("TERMINAL_CONTAINER_PERSISTENT", "true")
+        monkeypatch.setenv("TERMINAL_SANDBOX_DIR", str(sandbox))
+        monkeypatch.delenv("TERMINAL_DOCKER_VOLUMES", raising=False)
+
+        assert BasePlatformAdapter.validate_media_delivery_path(
+            "/root/.trix/auth.json"
         ) is None
 
 

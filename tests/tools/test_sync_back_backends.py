@@ -215,7 +215,15 @@ class TestModalBulkDownload:
     """Unit tests for _modal_bulk_download."""
 
     def test_modal_bulk_download_command(self, tmp_path):
-        """exec should be called with tar cf - -C /root/.hermes ."""
+        """exec should be called with ``tar cf - -C / <SANDBOX_HERMES_BASE>``.
+
+        Спека 18: the download command must tar the SAME base
+        ``_modal_bulk_upload``/``iter_sync_files`` use — hardcoding the
+        pre-rename ``root/.hermes`` here would silently break sync-back
+        (the tar entries and the file-mapping remote paths would disagree
+        on the base directory name)."""
+        from tools.credential_files import SANDBOX_HERMES_BASE
+
         env = _make_mock_modal_env()
         exec_calls = _wire_modal_download(env, tar_bytes=b"tar-content")
         dest = tmp_path / "backup.tar"
@@ -227,7 +235,7 @@ class TestModalBulkDownload:
         assert args[0] == "bash"
         assert args[1] == "-c"
         assert "tar cf -" in args[2]
-        assert "-C / root/.hermes" in args[2]
+        assert f"-C / {SANDBOX_HERMES_BASE.lstrip('/')}" in args[2]
 
 
     def test_modal_bulk_download_uses_120s_timeout(self, tmp_path):

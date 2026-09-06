@@ -76,5 +76,15 @@ class TestSkillViewRegistersPassthrough:
             result = json.loads(skill_view(name="simple-skill"))
 
         assert result["success"] is True
-        from tools.env_passthrough import get_all_passthrough
-        assert len(get_all_passthrough()) == 0
+        import tools.env_passthrough as _ep
+        from tools.environments.local import _HERMES_PROVIDER_ENV_BLOCKLIST
+
+        # Спека 17: this used to assert len(get_all_passthrough()) == 0 — a
+        # snapshot of "nothing registered", not a contract. Per CLAUDE.md's
+        # "Don't write change-detector tests" it's rewritten as an invariant:
+        # the always-on built-in proxy list is present in full even with no
+        # skills loaded and no config.yaml entries, and it never overlaps the
+        # provider-credential blocklist.
+        all_passthrough = _ep.get_all_passthrough()
+        assert _ep.BUILTIN_PASSTHROUGH_NAMES <= all_passthrough
+        assert not (_ep.BUILTIN_PASSTHROUGH_NAMES & _HERMES_PROVIDER_ENV_BLOCKLIST)

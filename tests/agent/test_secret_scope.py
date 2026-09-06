@@ -287,3 +287,64 @@ class TestApiServerListenerGlobals:
         finally:
             ss.reset_secret_scope(token)
         assert not ss._is_global_env("API_SERVER_KEY")
+
+
+class TestProxyEnvIsGlobal:
+    """Спека 17, Ruling 5: proxy address is a deployment/machine setting, not
+    a per-profile secret. Without this, tools.env_passthrough's built-in
+    proxy names being implicitly forwarded would make
+    resolve_passthrough_value()'s unscoped get_secret() call raise
+    UnscopedSecretError on every docker command under active multiplexing."""
+
+    PROXY_VARS = (
+        "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY",
+        "http_proxy", "https_proxy", "all_proxy", "no_proxy",
+    )
+
+    def test_proxy_vars_are_global(self):
+        for name in self.PROXY_VARS:
+            assert ss._is_global_env(name), name
+
+    def test_proxy_vars_read_environ_under_multiplex_with_no_scope(self, monkeypatch):
+        """The exact crash Ruling 5 describes: resolve_passthrough_value's
+        get_secret() call sits outside a try/except in docker.py, so a
+        proxy name that were NOT global would raise UnscopedSecretError
+        here instead of returning the process env value."""
+        for name in self.PROXY_VARS:
+            monkeypatch.setenv(name, f"value-for-{name}")
+        ss.set_multiplex_active(True)
+        try:
+            for name in self.PROXY_VARS:
+                assert ss.get_secret(name) == f"value-for-{name}"
+        finally:
+            ss.set_multiplex_active(False)
+
+    def test_proxy_vars_scoped_miss_still_reads_environ_under_multiplex(self, monkeypatch):
+        """Even with an active (unrelated) secret scope installed, the
+        global-env short-circuit must win before any scope lookup."""
+        for name in self.PROXY_VARS:
+            monkeypatch.setenv(name, f"value-for-{name}")
+        ss.set_multiplex_active(True)
+        token = ss.set_secret_scope({"TELEGRAM_BOT_TOKEN": "scoped"})
+        try:
+            for name in self.PROXY_VARS:
+                assert ss.get_secret(name) == f"value-for-{name}"
+        finally:
+            ss.reset_secret_scope(token)
+
+    def test_resolve_passthrough_value_does_not_raise_under_multiplex(self, monkeypatch):
+        """End-to-end through the actual function docker.py calls
+        (tools.env_passthrough.resolve_passthrough_value), outside any
+        try/except, exactly as docker.py:_resolve_passthrough_env calls it."""
+        from tools.env_passthrough import resolve_passthrough_value
+
+        monkeypatch.setenv("HTTPS_PROXY", "http://client-proxy.example:3128")
+        ss.set_multiplex_active(True)
+        token = ss.set_secret_scope({})
+        try:
+            assert (
+                resolve_passthrough_value("HTTPS_PROXY", "http://client-proxy.example:3128")
+                == "http://client-proxy.example:3128"
+            )
+        finally:
+            ss.reset_secret_scope(token)

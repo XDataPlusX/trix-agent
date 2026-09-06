@@ -17243,7 +17243,8 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
 
                 # Translate host cache path to in-container path if running under Docker backend.
                 # This ensures the agent receives a path it can open inside its sandbox, as the
-                # cache directories are auto-mounted at /root/.hermes/cache/* by get_cache_directory_mounts().
+                # cache directories are auto-mounted at SANDBOX_HERMES_BASE/cache/* by
+                # get_cache_directory_mounts().
                 agent_path = to_agent_visible_cache_path(path)
 
                 context_note = _build_document_context_note(display_name, agent_path, mtype)

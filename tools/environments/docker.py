@@ -239,6 +239,151 @@ def reap_orphan_containers(
     return removed
 
 
+def _dir_holds_a_file(path) -> bool:
+    """True if *path* contains at least one regular file at any depth.
+
+    Distinguishes "empty skeleton Docker created for nested bind mounts"
+    from "the agent actually stored something here". Symlinks are not
+    followed: a dangling link is not data worth blocking a migration for,
+    and following one could walk out of the tree entirely.
+    """
+    try:
+        for entry in path.rglob("*"):
+            if entry.is_symlink():
+                continue
+            if entry.is_file():
+                return True
+    except OSError:
+        # Unreadable tree — assume it holds something rather than delete it.
+        return True
+    return False
+
+
+def migrate_sandbox_hermes_base(
+    *,
+    profile_filter: str | None = None,
+    docker_exe: str | None = None,
+) -> dict:
+    """Спека 18 migration: force sandbox recreation onto ``SANDBOX_HERMES_BASE``.
+
+    Container reuse matches on labels only (see the label block above,
+    ``hermes-task-id`` / ``hermes-profile`` / the egress label) — it does
+    NOT fingerprint mounts. A persistent container created before the
+    ``/root/.hermes`` -> ``SANDBOX_HERMES_BASE`` rename would otherwise be
+    reused forever by label-matching alone, keeping its stale
+    ``/root/.hermes`` mounts. Two steps, both best-effort and idempotent:
+
+    1. Force-remove every ``hermes-agent=1`` container for the active
+       profile (running or not — an update implies the user wants the
+       change to take effect, and the container is recreated on the very
+       next agent command). ``cleanup(force_remove=True)`` needs a live
+       Python object and ``reap_orphan_containers()`` only reaps *exited*
+       containers, so neither covers this; this filters and force-removes
+       by label directly, the same way those two already talk to Docker.
+    2. Remove the stale ``<sandbox_dir>/docker/*/home/.hermes`` mount-point
+       directory on the host for each task. Docker's *nested* bind mounts
+       (the auto-mounted cache dirs live inside the ``/root`` home bind)
+       create their mount-point directories on the host side, and those
+       survive ``docker rm`` — left alone, a freshly recreated container
+       would present BOTH ``.trix`` and ``.hermes`` under ``/root``. Only
+       ``home/.hermes`` is touched: neither the sibling ``home/.trix`` (the
+       correct, current mirror) nor ``workspace/`` is touched.
+
+    Never raises: any Docker/filesystem failure here must not break
+    ``hermes update``. Returns a dict with ``containers_removed`` (int) and
+    ``host_dirs_removed`` (list of str) so the caller can report what
+    happened; both are empty/zero when there was nothing to migrate.
+    """
+    result: dict = {
+        "containers_removed": 0,
+        "host_dirs_removed": [],
+        "host_dirs_kept": [],
+    }
+
+    docker = docker_exe or find_docker()
+    if docker:
+        try:
+            profile = profile_filter or _get_active_profile_name()
+            filters = [
+                "--filter", "label=hermes-agent=1",
+                "--filter", f"label=hermes-profile={_sanitize_label_value(profile)}",
+            ]
+            listing = subprocess.run(
+                [docker, "ps", "-a", *filters, "--format", "{{.ID}}"],
+                capture_output=True, text=True, encoding="utf-8", errors="replace",
+                timeout=15, check=False, stdin=subprocess.DEVNULL,
+            )
+            candidate_ids = [
+                ln.strip() for ln in (listing.stdout or "").splitlines() if ln.strip()
+            ] if listing.returncode == 0 else []
+            for cid in candidate_ids:
+                try:
+                    rm = subprocess.run(
+                        [docker, "rm", "-f", cid],
+                        capture_output=True, text=True, encoding="utf-8", errors="replace",
+                        timeout=30, check=False, stdin=subprocess.DEVNULL,
+                    )
+                    if rm.returncode == 0:
+                        result["containers_removed"] += 1
+                        logger.info(
+                            "Спека 18 migration: removed sandbox container %s "
+                            "(profile=%s) so it recreates onto the new sandbox "
+                            "base", cid[:12], profile,
+                        )
+                    else:
+                        logger.debug(
+                            "Спека 18 migration: docker rm -f %s failed: %s",
+                            cid[:12], rm.stderr.strip(),
+                        )
+                except (subprocess.TimeoutExpired, OSError) as e:
+                    logger.debug(
+                        "Спека 18 migration: docker rm -f %s raised: %s", cid[:12], e
+                    )
+        except Exception as e:
+            logger.debug("Спека 18 migration: container removal step failed: %s", e)
+
+    try:
+        from tools.environments.base import get_sandbox_dir
+
+        docker_sandbox_root = get_sandbox_dir() / "docker"
+        if docker_sandbox_root.is_dir():
+            for task_dir in docker_sandbox_root.iterdir():
+                stale = task_dir / "home" / ".hermes"
+                if not stale.is_dir():
+                    continue
+                # ONLY the empty mount-point skeleton is removable. That
+                # directory is not exclusively ours: inside the sandbox it is
+                # the agent's own `~/.hermes`, and bundled skills instruct the
+                # agent to write state under it (`~/.hermes/competitor-watches/`,
+                # `.hermes/plans/`, ...). A blind rmtree here would delete the
+                # client's data during a routine `hermes update` — the one
+                # thing this migration must never do. Anything holding a real
+                # file is left exactly where it is and reported instead; the
+                # identity goal still lands on every machine where the agent
+                # never wrote there, which is the normal case.
+                if _dir_holds_a_file(stale):
+                    result["host_dirs_kept"].append(str(stale))
+                    logger.info(
+                        "Спека 18 migration: keeping %s — it holds agent data, "
+                        "not just empty mount points", stale,
+                    )
+                    continue
+                try:
+                    shutil.rmtree(stale)
+                    result["host_dirs_removed"].append(str(stale))
+                    logger.info(
+                        "Спека 18 migration: removed stale host mirror %s", stale
+                    )
+                except OSError as e:
+                    logger.debug(
+                        "Спека 18 migration: could not remove %s: %s", stale, e
+                    )
+    except Exception as e:
+        logger.debug("Спека 18 migration: host cleanup step failed: %s", e)
+
+    return result
+
+
 def _container_finished_at(docker_exe: str, container_id: str):
     """Parse ``docker inspect`` FinishedAt for *container_id*.
 
@@ -863,6 +1008,15 @@ class DockerEnvironment(BaseEnvironment):
 
     _profile_scoped_passthrough = True
 
+    # Names the built-in proxy passthrough (tools.env_passthrough) must NOT
+    # inject at runtime because iron-proxy egress is active and already owns
+    # them (Спека 17, Ruling 4). Populated in __init__ once
+    # _egress_proxy_args_for_docker() is known to have returned non-empty
+    # overrides; stays empty (default here for test doubles built via
+    # __new__, e.g. _make_execute_only_env) whenever egress isn't active.
+    _egress_suppressed_passthrough_names: frozenset[str] = frozenset()
+    _egress_suppression_logged: bool = False
+
     def _additional_profile_scoped_passthrough_names(self) -> tuple[str, ...]:
         """Keep explicit docker_forward_env values out of shared snapshots."""
         return tuple(self._forward_env)
@@ -1100,6 +1254,19 @@ class DockerEnvironment(BaseEnvironment):
         )
         _enforce_egress = _egress_enforce_on_docker()
         _critical_egress_names = _critical_egress_env_names(egress_env_overrides)
+        # Спека 17, Ruling 4: the built-in proxy passthrough
+        # (tools.env_passthrough.BUILTIN_PASSTHROUGH_NAMES) is an IMPLICIT
+        # forward — nothing checks it against egress collisions today, unlike
+        # the explicit docker_forward_env check right below. Runtime `-e`
+        # injection on every `docker exec` (see _resolve_passthrough_env)
+        # happens after container creation and would silently override the
+        # iron-proxy env this __init__ is about to bake in. Only suppress
+        # when egress actually produced overrides (i.e. it's configured AND
+        # running) — never when it's merely enabled-but-degraded, since
+        # _egress_proxy_args_for_docker() already returns empty in that case.
+        self._egress_suppressed_passthrough_names = (
+            frozenset(_critical_egress_names) if egress_env_overrides else frozenset()
+        )
         if egress_env_overrides:
             _forward_collisions = sorted(
                 key for key in self._forward_env if key in _critical_egress_names
@@ -1572,6 +1739,24 @@ class DockerEnvironment(BaseEnvironment):
         _implicit_forward = {
             k for k in passthrough_keys if not _is_hermes_internal_secret(k)
         }
+        # Спека 17, Ruling 4: iron-proxy wins. When egress produced real env
+        # overrides at container-creation time, the (implicit-only) built-in
+        # proxy passthrough must suppress itself for the names egress
+        # controls — otherwise this method's runtime `-e` injection
+        # (docker.py _run_bash) would override the egress-injected
+        # HTTPS_PROXY/CA-bundle env with the client's own proxy on every
+        # command. Explicit docker_forward_env is unaffected — that
+        # collision is already checked (and can raise) at container creation.
+        _egress_suppressed = self._egress_suppressed_passthrough_names & _implicit_forward
+        if _egress_suppressed:
+            _implicit_forward = _implicit_forward - _egress_suppressed
+            if not self._egress_suppression_logged:
+                logger.info(
+                    "Docker: iron-proxy egress is active; suppressing built-in "
+                    "proxy passthrough for %s in favor of egress-injected values.",
+                    sorted(_egress_suppressed),
+                )
+                self._egress_suppression_logged = True
         forward_keys = explicit_forward_keys | (_implicit_forward - _HERMES_PROVIDER_ENV_BLOCKLIST)
         hermes_env = _load_hermes_env_vars() if forward_keys else {}
         unset_names: set[str] = set()

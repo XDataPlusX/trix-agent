@@ -9,12 +9,13 @@ registry (``hermes-agent`` in huggingface.js ``agent-harnesses.ts``) —
 standard-var matching there is exact, so any other value is attributed to
 "unknown".
 
-The terminal backends additionally export both vars inside every wrapped
-shell command (``BaseEnvironment._wrap_command``) so the marker reaches
-REMOTE backends (Docker/SSH/Modal/Daytona/Singularity/Vercel) whose exec
-environment does not inherit the Hermes process env, and survives the
-cross-session leak guard that strips ``HERMES_SESSION_*`` from subprocess
-envs in engaged multi-session hosts.
+Upstream ALSO re-exported both vars inside every wrapped shell command
+(``BaseEnvironment._wrap_command``) so the marker would reach REMOTE
+backends, whose exec environment does not inherit the Hermes process env.
+Спека 18 removed that re-export: in a sandbox it puts the literal string
+``hermes-agent`` where the model reads it with a bare ``env`` and concludes
+it is Hermes. The host-process advertisement below is unchanged, so the
+local backend still gets both vars by ordinary inheritance.
 """
 
 import os
@@ -50,8 +51,14 @@ class TestAdvertiseAgentEnv:
         assert os.environ["HERMES_AGENT"] == "true"
 
 
-class TestWrapCommandAdvertisesHarness:
-    """The shell-level export in BaseEnvironment._wrap_command."""
+class TestWrapCommandDoesNotLeakHarnessIntoSandbox:
+    """Спека 18: the wrapped command must not carry the upstream name.
+
+    Found by a live scan inside the sandbox on VM 31.29.151.3 AFTER the
+    base rename: ``ls -a /root`` was clean, but ``env`` still answered
+    ``AI_AGENT=hermes-agent`` / ``HERMES_AGENT=true``. Asserts over the
+    string the function actually builds — never over source text.
+    """
 
     def _wrap(self, command: str) -> str:
         from tools.environments.local import LocalEnvironment
@@ -59,35 +66,41 @@ class TestWrapCommandAdvertisesHarness:
         env = LocalEnvironment.__new__(LocalEnvironment)
         env._snapshot_ready = False
         env._session_id = "testsession0"
-        env._cwd_marker = "__HERMES_CWD_testsession0__"
-        env._snapshot_path = "/tmp/hermes-snap-testsession0.sh"
+        env._cwd_marker = "__TRIX_CWD_testsession0__"
+        env._snapshot_path = "/tmp/trix-snap-testsession0.sh"
         env._snapshot_passthrough_names = set()
         return env._wrap_command(command, "/tmp")
 
-    def test_wrap_command_contains_export(self):
+    def test_wrapped_command_does_not_export_harness_vars(self):
         wrapped = self._wrap("true")
-        assert 'AI_AGENT="${AI_AGENT:-' + HARNESS_ID + '}"' in wrapped
-        assert 'HERMES_AGENT="${HERMES_AGENT:-true}"' in wrapped
+        assert "AI_AGENT=" not in wrapped
+        assert "HERMES_AGENT=" not in wrapped
 
-    def test_export_precedes_user_command(self):
+    def test_wrapped_command_carries_no_upstream_name_at_all(self):
+        """Не только эти две переменные — вообще ни одного упоминания."""
         wrapped = self._wrap("echo payload-sentinel")
-        assert wrapped.index("AI_AGENT=") < wrapped.index("payload-sentinel")
+        assert HARNESS_ID not in wrapped
+        assert "hermes" not in wrapped.lower()
+        assert "payload-sentinel" in wrapped
 
-    def test_shell_sets_default_and_preserves_outer(self):
-        """Run the wrapped script through real bash both ways."""
-        wrapped = self._wrap('echo "AI=$AI_AGENT HERMES=$HERMES_AGENT"')
-
+    def test_sandbox_shell_sees_no_harness_vars(self):
+        """Прогон через настоящий bash: переменных нет в среде команды."""
+        wrapped = self._wrap('echo "AI=[$AI_AGENT] HERMES=[$HERMES_AGENT]"')
         clean_env = {k: v for k, v in os.environ.items()
                      if k not in ("AI_AGENT", "HERMES_AGENT")}
         out = subprocess.run(
             ["bash", "-c", wrapped], capture_output=True, text=True,
             env=clean_env, timeout=30,
         )
-        assert f"AI={HARNESS_ID} HERMES=true" in out.stdout
+        assert "AI=[] HERMES=[]" in out.stdout, out.stdout
 
-        outer_env = dict(clean_env, AI_AGENT="pi", HERMES_AGENT="false")
+    def test_outer_harness_value_still_reaches_the_command(self):
+        """Экспорт убран, но унаследованное значение не теряется."""
+        wrapped = self._wrap('echo "AI=[$AI_AGENT]"')
+        env = dict(os.environ)
+        env["AI_AGENT"] = "outer-harness"
         out = subprocess.run(
             ["bash", "-c", wrapped], capture_output=True, text=True,
-            env=outer_env, timeout=30,
+            env=env, timeout=30,
         )
-        assert "AI=pi HERMES=false" in out.stdout
+        assert "AI=[outer-harness]" in out.stdout, out.stdout

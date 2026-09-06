@@ -20,6 +20,7 @@ from hermes_cli.config import (
     load_env,
     migrate_config,
     read_raw_config,
+    reload_env,
     remove_env_value,
     save_config,
     save_env_value,
@@ -364,6 +365,48 @@ class TestRemoveEnvValue:
         assert "DROP" not in env_path.read_text()
         env_mode = env_path.stat().st_mode & 0o777
         assert env_mode == 0o640, f"expected 0o640, got {oct(env_mode)}"
+
+
+class TestReloadEnvProxyRemoval:
+    """Спека 17, Ruling 3: reload_env() must remove a proxy var deleted from
+    .env, not just pick up new/changed values — otherwise the gateway
+    keeps routing sandbox/host traffic through a dead proxy address until
+    the next full process restart."""
+
+    PROXY_VARS = (
+        "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY",
+        "http_proxy", "https_proxy", "all_proxy", "no_proxy",
+    )
+
+    def test_removed_proxy_var_is_cleared_from_os_environ(self, tmp_path):
+        env_path = tmp_path / ".env"
+        env_path.write_text("HTTPS_PROXY=http://old-proxy.example:8080\nOTHER=keep\n")
+        with patch.dict(os.environ, {"HERMES_HOME": str(tmp_path)}, clear=False):
+            reload_env()
+            assert os.environ.get("HTTPS_PROXY") == "http://old-proxy.example:8080"
+
+            env_path.write_text("OTHER=keep\n")
+            reload_env()
+
+            assert "HTTPS_PROXY" not in os.environ
+            assert os.environ.get("OTHER") == "keep"
+
+    def test_all_eight_proxy_names_are_known_to_reload_env(self, tmp_path):
+        """Every casing from Ruling 1 must round-trip through _EXTRA_ENV_KEYS,
+        not just HTTPS_PROXY/NO_PROXY — an invariant, not a literal snapshot
+        of the set's contents."""
+        env_text = "\n".join(f"{name}=value-{name}" for name in self.PROXY_VARS)
+        env_path = tmp_path / ".env"
+        env_path.write_text(env_text + "\n")
+        with patch.dict(os.environ, {"HERMES_HOME": str(tmp_path)}, clear=False):
+            reload_env()
+            for name in self.PROXY_VARS:
+                assert os.environ.get(name) == f"value-{name}"
+
+            env_path.write_text("")
+            reload_env()
+            for name in self.PROXY_VARS:
+                assert name not in os.environ, name
 
 
 class TestSaveConfigAtomicity:

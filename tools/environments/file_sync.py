@@ -50,26 +50,30 @@ DeleteFn = Callable[[list[str]], None]  # (remote_paths) -> raises on failure
 GetFilesFn = Callable[[], list[tuple[str, str]]]  # () -> [(host_path, remote_path), ...]
 
 
-def iter_sync_files(container_base: str = "/root/.hermes") -> list[tuple[str, str]]:
+def iter_sync_files(container_base: str = None) -> list[tuple[str, str]]:
     """Enumerate all files that should be synced to a remote environment.
 
     Combines credentials, skills, and cache into a single flat list of
     (host_path, remote_path) pairs.  Credential paths are remapped from
-    the hardcoded /root/.hermes to *container_base* because the remote
+    the default SANDBOX_HERMES_BASE to *container_base* because the remote
     user's home may differ (e.g. /home/daytona, /home/user).
     """
     # Late import: credential_files imports agent modules that create
     # circular dependencies if loaded at file_sync module level.
     from tools.credential_files import (
+        SANDBOX_HERMES_BASE,
         get_credential_file_mounts,
         iter_cache_files,
         iter_skills_files,
     )
 
+    if container_base is None:
+        container_base = SANDBOX_HERMES_BASE
+
     files: list[tuple[str, str]] = []
     for entry in get_credential_file_mounts():
         remote = entry["container_path"].replace(
-            "/root/.hermes", container_base, 1
+            SANDBOX_HERMES_BASE, container_base, 1
         )
         files.append((entry["host_path"], remote))
     for entry in iter_skills_files(container_base=container_base):

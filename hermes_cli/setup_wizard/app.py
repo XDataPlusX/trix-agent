@@ -1055,10 +1055,29 @@ def _pending_tool_installs(form: dict, tools_rows: list[dict]) -> list[dict]:
         value = tool_provider.get(category)
         if isinstance(value, str) and value:
             candidates.append(_selected_category_row(category, value, tools_rows, "provider_key"))
+    # Не запускаем хук, результат которого нечем проверить.
+    #
+    # Требование владельца 2026-09-06: «важно, чтобы он скачался, а не
+    # просто сказал „всё скачано" и поменял, а он не будет работать».
+    # Успех установки здесь определяется не кодом возврата установщика, а
+    # проверкой «появилось ли рабочее» (``_POST_SETUP_READY``, сверяется
+    # ДО и ПОСЛЕ вызова). Для хука без такой проверки отличить успех от
+    # провала нечем — значит и запускать его незачем.
+    #
+    # Это не теоретическая чистота. Единственный такой хук сегодня —
+    # ``xai_grok``: он задаёт вопросы в консоль, а мастер работает без
+    # терминала, и клиент, выбравший эту строку, получал зависание до
+    # потолка в 600 секунд и «установка не удалась» — на инструменте,
+    # которому установка не нужна вовсе (строка активируется ключом
+    # XAI_API_KEY, о чём мастер и пишет рядом с ней).
+    from hermes_cli.tools_config import _POST_SETUP_READY
+
     return [
         row
         for row in candidates
-        if row is not None and row.get("post_setup") and row.get("installed") is not True
+        if row is not None
+        and row.get("post_setup") in _POST_SETUP_READY
+        and row.get("installed") is not True
     ]
 
 

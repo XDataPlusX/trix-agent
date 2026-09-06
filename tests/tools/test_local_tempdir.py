@@ -13,7 +13,7 @@ class TestLocalTempDir:
             env = LocalEnvironment(cwd=".", timeout=10)
 
         assert env.get_temp_dir() == "/data/data/com.termux/files/usr/tmp"
-        assert env._snapshot_path == f"/data/data/com.termux/files/usr/tmp/hermes-snap-{env._session_id}.sh"
+        assert env._snapshot_path == f"/data/data/com.termux/files/usr/tmp/trix-snap-{env._session_id}.sh"
         assert env._cwd_file == f"/data/data/com.termux/files/usr/tmp/hermes-cwd-{env._session_id}.txt"
 
 
@@ -28,5 +28,5 @@ class TestLocalTempDir:
              patch.object(LocalEnvironment, "init_session", autospec=True, return_value=None):
             env = LocalEnvironment(cwd=".", timeout=10)
             assert env.get_temp_dir() == "/cache/tmp"
-            assert env._snapshot_path == f"/cache/tmp/hermes-snap-{env._session_id}.sh"
+            assert env._snapshot_path == f"/cache/tmp/trix-snap-{env._session_id}.sh"
             assert env._cwd_file == f"/cache/tmp/hermes-cwd-{env._session_id}.txt"

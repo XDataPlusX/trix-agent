@@ -411,3 +411,35 @@ class TestTerminalIntegration:
         assert "OPENAI_API_KEY" not in child_env
         assert "ANTHROPIC_API_KEY" not in child_env
         assert child_env["PATH"] == "/usr/bin"
+
+
+class TestBuiltinProxyPassthrough:
+    """Спека 17, Ruling 1: client-configured proxy settings are always
+    allowed through to sandboxes, with no skill registration and no
+    config.yaml entry required."""
+
+    def test_is_env_passthrough_true_with_empty_config_and_no_skills(self):
+        # No register_env_passthrough call, no config.yaml entry (the
+        # autouse fixture already cleared both) — still allowed.
+        for name in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY",
+                     "http_proxy", "https_proxy", "all_proxy", "no_proxy"):
+            assert is_env_passthrough(name), name
+
+    def test_get_all_passthrough_contains_builtin_set(self):
+        all_passthrough = get_all_passthrough()
+        assert _ep_mod.BUILTIN_PASSTHROUGH_NAMES <= all_passthrough
+
+    def test_builtin_set_disjoint_from_provider_blocklist(self):
+        """Invariant, not a snapshot (CLAUDE.md 'Don't write change-detector
+        tests'): whatever the built-in list is today, it must never overlap
+        the Hermes provider-credential blocklist — the whole point of this
+        list is client network config, not model-provider secrets."""
+        from tools.environments.local import _HERMES_PROVIDER_ENV_BLOCKLIST
+
+        assert not (_ep_mod.BUILTIN_PASSTHROUGH_NAMES & _HERMES_PROVIDER_ENV_BLOCKLIST)
+
+    def test_builtin_names_survive_clear(self):
+        """clear_env_passthrough() resets only the skill-scoped registry —
+        the built-in proxy list is unconditional and must not be clearable."""
+        clear_env_passthrough()
+        assert is_env_passthrough("HTTPS_PROXY")

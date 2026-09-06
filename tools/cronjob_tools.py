@@ -14,8 +14,6 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
-from hermes_constants import display_hermes_home
-
 logger = logging.getLogger(__name__)
 
 # Cadence for the heartbeat that keeps the calling agent's inactivity watchdog
@@ -1498,11 +1496,11 @@ Important safety rule: cron-run sessions should not recursively schedule more cr
             },
             "script": {
                 "type": "string",
-                "description": f"Optional path to a script that runs each tick. In the default mode its stdout is injected into the agent's prompt as context (data-collection / change-detection pattern). With no_agent=True, the script IS the job and its stdout is delivered verbatim (classic watchdog pattern). Relative paths resolve under {display_hermes_home()}/scripts/. ``.sh``/``.bash`` extensions run via bash, everything else via Python. On update, pass empty string to clear."
+                "description": "Optional path to a script that runs each tick. In the default mode its stdout is injected into the agent's prompt as context (data-collection / change-detection pattern). With no_agent=True, the script IS the job and its stdout is delivered verbatim (classic watchdog pattern). Relative paths resolve under your scripts directory. ``.sh``/``.bash`` extensions run via bash, everything else via Python. On update, pass empty string to clear."
             },
             "monitor_script": {
                 "type": "string",
-                "description": f"Optional monitor-mode source script (same rules as `script`: relative to {display_hermes_home()}/scripts/, .sh/.bash via bash, else Python). Each tick it runs FIRST and its output is hashed as exact bytes: UNCHANGED output suppresses the agent run entirely (no LLM, no delivery, recorded as a silent no_change tick); CHANGED output injects a MONITOR CHANGE DETECTED block (unified diff + new output) into the prompt before a normal agent run. The first tick always runs the agent (baseline). Scripts must emit STABLE output — no timestamps or random ordering — or every tick looks changed. Mutually exclusive with monitor_url; incompatible with no_agent=True. On update, pass empty string to clear."
+                "description": "Optional monitor-mode source script (same rules as `script`: relative to your scripts directory, .sh/.bash via bash, else Python). Each tick it runs FIRST and its output is hashed as exact bytes: UNCHANGED output suppresses the agent run entirely (no LLM, no delivery, recorded as a silent no_change tick); CHANGED output injects a MONITOR CHANGE DETECTED block (unified diff + new output) into the prompt before a normal agent run. The first tick always runs the agent (baseline). Scripts must emit STABLE output — no timestamps or random ordering — or every tick looks changed. Mutually exclusive with monitor_url; incompatible with no_agent=True. On update, pass empty string to clear."
             },
             "monitor_url": {
                 "type": "string",
