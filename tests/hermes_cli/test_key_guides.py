@@ -274,9 +274,11 @@ def test_the_card_requirement_is_visible_without_opening_anything():
     называет сам Brave, — а его же документация требует привязать карту.
     Спрятать это за раскрывашкой значит дать клиенту потратить время зря.
     """
-    assert guide_payload("BRAVE_SEARCH_API_KEY")["warning"] == (
-        "Потребуется банковская карта."
-    )
+    warning = guide_payload("BRAVE_SEARCH_API_KEY")["warning"]
+    assert "карт" in warning.lower()
+    # Зарубежному сервису нужна зарубежная карта — иначе клиент попробует
+    # свою и упрётся; см. test_a_foreign_service_asks_for_a_foreign_card.
+    assert "иностранного банка" in warning
 
 
 def test_a_paid_only_service_warns_without_opening_anything():
@@ -307,3 +309,97 @@ def test_a_card_requirement_is_never_silent(env_key):
     """Инвариант: где нужна карта — там всегда есть видимое предупреждение."""
     if GUIDES[env_key].card == CARD_YES:
         assert guide_payload(env_key)["warning"], env_key
+
+
+# --- плашка о тарифе ----------------------------------------------------------
+
+
+def test_the_badge_says_free_only_when_it_is_free_without_a_card():
+    """Ровно то, что клиент хочет увидеть, не открывая ничего."""
+    from hermes_cli.trix_key_guides import badge_for
+
+    assert badge_for("TAVILY_API_KEY") == "бесплатно, без карты"
+    assert badge_for("FIRECRAWL_API_KEY") == "бесплатно, без карты"
+    assert badge_for("ELEVENLABS_API_KEY") == "бесплатно, без карты"
+
+
+def test_the_badge_never_hides_a_card_requirement():
+    """Апстримная плашка у Brave говорит «free» — наша не имеет права."""
+    from hermes_cli.trix_key_guides import badge_for
+
+    badge = badge_for("BRAVE_SEARCH_API_KEY")
+    assert "бесплатно" in badge
+    assert "карт" in badge
+
+
+def test_a_paid_service_is_badged_paid():
+    from hermes_cli.trix_key_guides import badge_for
+
+    assert badge_for("DEEPINFRA_API_KEY") == "платно"
+    assert badge_for("KREA_API_KEY") == "платно"
+
+
+def test_an_unchecked_service_gets_no_badge_at_all():
+    """Догадка на плашке хуже её отсутствия: плашку запоминают как факт."""
+    from hermes_cli.trix_key_guides import badge_for
+
+    assert badge_for("FAL_KEY") == ""
+    assert badge_for("СОВСЕМ_НЕИЗВЕСТНЫЙ") == ""
+
+
+def test_the_badge_reaches_the_catalog_rows():
+    """Сквозная проверка: плашка доезжает до строки, которую видит клиент."""
+    from hermes_cli.setup_wizard.tools_view import wizard_tool_blocks
+
+    seen = {}
+    for block in wizard_tool_blocks():
+        for row in block.get("rows") or []:
+            if row.get("price_badge"):
+                seen[row["name"]] = row["price_badge"]
+    assert seen, "ни одна плашка не доехала"
+    assert any("бесплатно, без карты" == v for v in seen.values())
+
+
+def test_the_upstream_badge_is_not_what_the_client_reads():
+    """Разъезд апстримной плашки с фактами — причина завести свою.
+
+    У Brave апстримный badge говорит «free», хотя нужна карта; у Tavily —
+    «paid», хотя бесплатный тариф есть. Проверяем, что наши строки
+    основаны на справочнике, а не на нём.
+    """
+    from hermes_cli.setup_wizard.tools_view import wizard_tool_blocks
+
+    for block in wizard_tool_blocks():
+        for row in block.get("rows") or []:
+            if row.get("name") == "Tavily":
+                assert row.get("price_badge") == "бесплатно, без карты"
+                return
+    pytest.skip("строки Tavily нет в каталоге этой сборки")
+
+
+# --- формулировка про карту ---------------------------------------------------
+
+
+def test_a_foreign_service_asks_for_a_foreign_card():
+    """«Банковская карта» российский клиент прочитает как «любая».
+
+    Оплата у зарубежных сервисов идёт за границу и в долларах. Мы не
+    утверждаем, что российскую карту отвергнут — этого мы не проверяли;
+    мы называем ту, которой оплата пройдёт наверняка.
+    """
+    said = guide_payload("BRAVE_SEARCH_API_KEY")["warning"]
+    assert "иностранного банка" in said
+
+
+def test_a_russian_service_is_not_told_to_find_a_foreign_card():
+    guide = GUIDES["NEXARA_API_KEY"]
+    assert guide.russian is True
+    said = " ".join(
+        [guide_payload("NEXARA_API_KEY")["warning"], *guide_payload("NEXARA_API_KEY")["notes"]]
+    )
+    assert "иностранного банка" not in said
+
+
+def test_a_paid_foreign_service_names_the_card_too():
+    said = guide_payload("KREA_API_KEY")["warning"]
+    assert "платный" in said and "иностранного банка" in said

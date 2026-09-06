@@ -64,6 +64,15 @@ class KeyGuide:
     source: str = ""
     """Откуда взяты сведения о тарифе — чтобы проверять было по чему."""
 
+    russian: bool = False
+    """Российский ли сервис.
+
+    От этого зависит формулировка про карту. Для клиента из России
+    «нужна банковская карта» у зарубежного сервиса и у российского —
+    это два разных препятствия: первое он, скорее всего, не преодолеет
+    своей картой, второе преодолеет обычной. Сказать просто «карта»
+    значит дать ему попробовать и упереться."""
+
     def __post_init__(self) -> None:
         if self.free not in _VALID_FREE:
             raise ValueError(f"{self.service}: неизвестное значение free={self.free!r}")
@@ -98,9 +107,22 @@ def _free_line(guide: KeyGuide) -> str:
     return "Есть ли бесплатный тариф — мы не проверяли."
 
 
+def _card_wording(guide: KeyGuide) -> str:
+    """«Карта» для зарубежного сервиса — не та же карта, что у российского.
+
+    Оплата у зарубежных сервисов идёт за границу и в долларах, поэтому
+    клиенту нужна карта иностранного банка. Мы НЕ утверждаем, что
+    российскую карту отвергнут — этого мы не проверяли; мы называем, чем
+    оплата пройдёт наверняка.
+    """
+    if guide.russian:
+        return "Потребуется банковская карта."
+    return "Потребуется банковская карта иностранного банка."
+
+
 def _card_line(guide: KeyGuide) -> str:
     if guide.card == CARD_YES:
-        return "Потребуется банковская карта."
+        return _card_wording(guide)
     if guide.card == CARD_NO:
         return "Карта не потребуется."
     if guide.free in (FREE_YES, FREE_TRIAL):
@@ -108,6 +130,32 @@ def _card_line(guide: KeyGuide) -> str:
         # бесплатно. На платном сервисе он не задаётся.
         return "Просят ли карту — мы не уточняли."
     return ""
+
+
+def badge_for(env_key: str) -> str:
+    """Короткая плашка к строке каталога — видна ДО выбора сервиса.
+
+    Апстримные плашки (`badge` в схеме плагина) для этого не годятся: они
+    английские и расходятся с фактами. У Brave там стоит «free», хотя
+    сервис требует карту; у Tavily — «paid», хотя 1000 запросов в месяц
+    бесплатны и карта не нужна. То есть каталог уводил клиента ОТ лучшего
+    бесплатного варианта.
+
+    Пустая строка, когда тариф не проверен: догадка на плашке хуже, чем
+    её отсутствие — плашку читают мельком и запоминают как факт.
+    """
+    guide = guide_for(env_key)
+    if guide is None or guide.free == FREE_UNKNOWN:
+        return ""
+    if guide.free == FREE_NO:
+        return "платно"
+    if guide.free == FREE_TRIAL:
+        return "бесплатные кредиты на старт"
+    if guide.card == CARD_NO:
+        return "бесплатно, без карты"
+    if guide.card == CARD_YES:
+        return "бесплатно, но нужна карта"
+    return "есть бесплатный тариф"
 
 
 def guide_payload(env_key: str) -> dict | None:
@@ -130,8 +178,10 @@ def guide_payload(env_key: str) -> dict | None:
         # Для платного сервиса главное — что он платный; необходимость
         # карты из этого и так следует.
         warning = "Бесплатного тарифа нет — сервис платный."
+        if not guide.russian:
+            warning += " Оплата картой иностранного банка."
     elif guide.card == CARD_YES:
-        warning = "Потребуется банковская карта."
+        warning = _card_wording(guide)
 
     notes = []
     free_line = _free_line(guide)
@@ -282,6 +332,7 @@ GUIDES.update(
         ),
         "NEXARA_API_KEY": KeyGuide(
             service="Nexara",
+            russian=True,
             steps=_steps("nexara.ru"),
             free=FREE_YES,
             free_note="200 минут распознавания новым пользователям",

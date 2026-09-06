@@ -360,6 +360,13 @@ TITLES_RU: dict[str, str] = {
 # renderHomeAssistantBlock() — so the dict stays a complete, key-addressable
 # map of the whole catalog rather than "whatever page.py happens to read
 # today".
+def _price_badge(env_key: str) -> str:
+    """Плашка о тарифе — отдельной функцией ради подмены в тестах."""
+    from hermes_cli.trix_key_guides import badge_for
+
+    return badge_for(env_key)
+
+
 def _key_guide_payload(env_key: str) -> dict | None:
     """Справка по ключу — отдельной функцией ради подмены в тестах."""
     from hermes_cli.trix_key_guides import guide_payload
@@ -1023,6 +1030,18 @@ def wizard_tool_blocks() -> list[dict]:
                 guide = _key_guide_payload(env.get("key", ""))
                 if guide:
                     env["guide"] = guide
+            # Плашка о тарифе — из НАШЕГО проверенного справочника, а не из
+            # апстримного `badge`: тот английский и расходится с фактами
+            # (у Brave стоит «free», хотя нужна карта; у Tavily — «paid»,
+            # хотя есть бесплатный тариф без карты).
+            price_badge = ""
+            for env in env_vars:
+                key = env.get("key", "")
+                if key and not key.endswith("_URL"):
+                    price_badge = _price_badge(key)
+                    if price_badge:
+                        break
+
             if cat_key in _WEB_CATEGORIES and _is_self_hosted_row(provider) and not provider.get("post_setup"):
                 probe_url = _self_hosted_probe_url(provider)
                 if not probe_url:
@@ -1057,6 +1076,9 @@ def wizard_tool_blocks() -> list[dict]:
                 {
                     "name": name,
                     "badge": badge,
+                    # Плашка о тарифе, которую видит клиент (badge выше —
+                    # апстримный, английский, на страницу не выводится).
+                    "price_badge": price_badge,
                     "tag": provider.get("tag", ""),
                     "env_vars": env_vars,
                     "post_setup": provider.get("post_setup"),

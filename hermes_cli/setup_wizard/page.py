@@ -3541,6 +3541,20 @@ _JS = """
     return select;
   }
 
+  // Подпись строки в списке выбора. Была шестью одинаковыми выражениями
+  // по файлу; собрана в одно место, когда к ней добавилась плашка о
+  // тарифе — иначе шесть мест разъехались бы при первой же правке.
+  //
+  // price_badge приходит с сервера из нашего проверенного справочника.
+  // Пусто, когда тариф не проверен: догадка на плашке хуже её отсутствия,
+  // потому что плашку читают мельком и запоминают как факт.
+  function rowOptionLabel(row) {
+    var text = row.name;
+    if (row.recommended) text += " (рекомендуется)";
+    if (row.price_badge) text += " — " + row.price_badge;
+    return text;
+  }
+
   function addSelectOption(select, value, text) {
     var opt = document.createElement("option");
     opt.value = value;
@@ -3928,7 +3942,7 @@ _JS = """
     var options = rows.map(function (row) {
       return {
         value: row.web_backend,
-        label: row.name + (row.recommended ? " (рекомендуется)" : ""),
+        label: rowOptionLabel(row),
         recommended: !!row.recommended,
       };
     });
@@ -4060,7 +4074,7 @@ _JS = """
     var options = rows.map(function (row) {
       return {
         value: row.web_backend,
-        label: row.name + (row.recommended ? " (рекомендуется)" : ""),
+        label: rowOptionLabel(row),
         recommended: !!row.recommended,
       };
     });
@@ -4205,7 +4219,7 @@ _JS = """
       // one in wins for both, consistently.
       if (rowByKey.hasOwnProperty(key)) return;
       rowByKey[key] = row;
-      otherOptions.push({ value: key, label: row.name });
+      otherOptions.push({ value: key, label: rowOptionLabel(row) });
     });
 
     var current = state.current || {};
@@ -4298,7 +4312,7 @@ _JS = """
       // guard in renderVoiceBlock() above for why.
       if (rowByKey.hasOwnProperty(key)) return;
       rowByKey[key] = row;
-      options.push({ value: key, label: row.name + (row.recommended ? " (рекомендуется)" : ""), recommended: !!row.recommended });
+      options.push({ value: key, label: rowOptionLabel(row), recommended: !!row.recommended });
     });
 
     var current = state.current || {};
@@ -4378,7 +4392,7 @@ _JS = """
       // Finding 17: first row with a given key wins.
       if (rowByKey.hasOwnProperty(key)) return;
       rowByKey[key] = row;
-      options.push({ value: key, label: row.name + (row.recommended ? " (рекомендуется)" : ""), recommended: !!row.recommended });
+      options.push({ value: key, label: rowOptionLabel(row), recommended: !!row.recommended });
     });
 
     var current = state.current || {};
@@ -4457,7 +4471,7 @@ _JS = """
       // Finding 17: first row with a given key wins.
       if (rowByKey.hasOwnProperty(key)) return;
       rowByKey[key] = row;
-      options.push({ value: key, label: row.name + (row.recommended ? " (рекомендуется)" : ""), recommended: !!row.recommended });
+      options.push({ value: key, label: rowOptionLabel(row), recommended: !!row.recommended });
     });
 
     var current = state.current || {};

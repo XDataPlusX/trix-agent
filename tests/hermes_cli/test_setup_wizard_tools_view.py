@@ -403,6 +403,7 @@ def test_row_contract_keys():
         "default_voice",
         "install_blocked",
         "install_blocked_reason_ru",
+        "price_badge",
     }
     for block in tv.wizard_tool_blocks():
         for row in block["rows"]:
