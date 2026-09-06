@@ -263,11 +263,14 @@ GUIDES.update(
             service="Tavily",
             steps=_steps("tavily.com"),
             free=FREE_YES,
-            free_note="1000 запросов в месяц на тарифе Researcher",
+            # «Кредит» — не то же самое, что запрос: обычный поиск стоит
+            # 1 кредит, углублённый — 2. Писать «1000 запросов» было бы
+            # обещанием, которого сервис не даёт.
+            free_note="1000 кредитов в месяц: обычный поиск — 1 кредит, углублённый — 2",
             card=CARD_NO,
             key_url="https://app.tavily.com/home",
             checked=_CHECKED,
-            source="https://tavily.com/pricing",
+            source="https://docs.tavily.com/documentation/api-credits",
         ),
         "FIRECRAWL_API_KEY": KeyGuide(
             service="Firecrawl",

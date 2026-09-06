@@ -1087,7 +1087,9 @@ _MSG_TOOL_PROVIDER_UNKNOWN = "Неизвестный вариант инстру
 _MSG_TOOL_INSTALL_FAILED_GENERIC = "Установка не удалась. Подробности — в логах на сервере."
 
 
-def _run_tool_install_with_timeout(post_setup_key: str) -> dict:
+def _run_tool_install_with_timeout(
+    post_setup_key: str, timeout: float | None = None
+) -> dict:
     """Run ``run_tool_install(post_setup_key)`` under the same 600s ceiling
     the old, now-removed standalone ``/api/install`` endpoint enforced
     (``_INSTALL_TIMEOUT_SECONDS``) — this is where that protection moved
@@ -1106,10 +1108,22 @@ def _run_tool_install_with_timeout(post_setup_key: str) -> dict:
     subprocess it may have spawned keeps running server-side, same
     caveat the removed endpoint's own docstring already carried.
     """
+    # Потолок попытки: обычный, но не больше, чем осталось у этапа —
+    # иначе одна зависшая установка съедала бы бюджет всех повторов
+    # (см. hermes_cli/trix_install_retry).
+    limit = _INSTALL_TIMEOUT_SECONDS
+    if timeout is not None:
+        # Только ВНИЗ. Нижняя граница в секунду молча повышала бы потолок,
+        # заданный вызывающим, — а его задают, чтобы уложиться в общий
+        # бюджет этапа. Эпсилон нужен лишь чтобы не передать ноль или
+        # отрицательное: до нуля дело не доходит (повторщик не начинает
+        # попытку без времени), но полагаться на это здесь незачем.
+        limit = min(_INSTALL_TIMEOUT_SECONDS, max(0.01, timeout))
+
     pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
     future = pool.submit(run_tool_install, post_setup_key)
     try:
-        result = future.result(timeout=_INSTALL_TIMEOUT_SECONDS)
+        result = future.result(timeout=limit)
     except concurrent.futures.TimeoutError:
         logger.warning("submit install timed out: key=%s", post_setup_key)
         pool.shutdown(wait=False)
@@ -1668,19 +1682,42 @@ def _run_submit(form: dict, app: FastAPI) -> tuple[int, dict]:
     tools_rows_for_install = _sync_cached_tool_blocks(app)
     pending_installs = _pending_tool_installs(form, tools_rows_for_install)
     if pending_installs:
+        from hermes_cli.trix_install_retry import (
+            INSTALL_STAGE_BUDGET_SECONDS,
+            install_with_retries,
+            retry_hint,
+        )
+
+        # Один бюджет на весь этап, на все инструменты сразу: клиент ждёт
+        # ответа в браузере, и три попытки по 600 с растянули бы отправку
+        # формы на полчаса.
+        budget_left = INSTALL_STAGE_BUDGET_SECONDS
         for row in pending_installs:
             post_setup_key = row.get("post_setup")
-            result = _run_tool_install_with_timeout(post_setup_key)
+            result = install_with_retries(
+                post_setup_key,
+                _run_tool_install_with_timeout,
+                budget_left=budget_left,
+            )
+            budget_left -= result.get("spent", 0.0)
+            attempts = int(result.get("attempts", 1) or 1)
             if not result.get("ok"):
+                base = result.get("message") or _MSG_TOOL_INSTALL_FAILED_GENERIC
                 tool_install_failures.append(
                     {
                         "name": row.get("name") or post_setup_key,
-                        "message": result.get("message") or _MSG_TOOL_INSTALL_FAILED_GENERIC,
+                        "message": f"{base} {retry_hint(attempts)}",
                     }
                 )
-                logger.warning("submit install failed: key=%s", post_setup_key)
+                logger.warning(
+                    "submit install failed: key=%s (попыток: %d)",
+                    post_setup_key, attempts,
+                )
             else:
-                logger.info("submit install succeeded: key=%s", post_setup_key)
+                logger.info(
+                    "submit install succeeded: key=%s (попыток: %d)",
+                    post_setup_key, attempts,
+                )
         # Every install above just changed the very "installed" verdicts
         # this cache holds (successful or not — a failed install can still
         # have left a partial artifact behind) — the wizard stays open

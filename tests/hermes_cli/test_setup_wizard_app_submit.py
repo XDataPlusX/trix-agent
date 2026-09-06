@@ -55,6 +55,24 @@ GOOD_FORM = {
 }
 
 
+@pytest.fixture(autouse=True)
+def _no_real_retry_pauses(monkeypatch):
+    """Повторы установки — да, настоящие паузы между ними — нет.
+
+    Мастер повторяет неудавшуюся установку (hermes_cli/trix_install_retry),
+    и паузы между попытками настоящие: в этом файле несколько тестов
+    нарочно валят установку, и без обнуления сюита начинает спать
+    десятками секунд. Само число попыток при этом сохраняется — проверки
+    отчёта об ошибке продолжают идти по тому же пути. Расписание пауз
+    проверяется отдельно, на поддельных часах, в
+    tests/hermes_cli/test_install_retries.py.
+    """
+    from hermes_cli import trix_install_retry
+
+    monkeypatch.setattr(trix_install_retry, "RETRY_BACKOFF_SECONDS", (0.0, 0.0))
+
+
+
 def _ok_stack(monkeypatch, wapp):
     monkeypatch.setattr(wapp, "check_telegram_token", lambda *a: {"ok": True, "username": "trixbot"})
     monkeypatch.setattr(wapp, "check_provider_key", lambda *a: {"ok": True})
@@ -584,9 +602,13 @@ def test_install_failure_does_not_fail_the_submission(logged_in, monkeypatch):
 
     assert body["ok"] is True, body
     assert restart_calls == [1]  # restart still ran despite the install failure
-    assert body["tool_install_failures"] == [
-        {"name": "Camofox", "message": "На этой машине не найден Node.js."}
-    ]
+    # Сообщение теперь несёт ещё и подсказку про повтор (мастер пробует
+    # установку несколько раз — см. hermes_cli/trix_install_retry), поэтому
+    # проверяется суть, а не дословный текст.
+    assert len(body["tool_install_failures"]) == 1
+    failure = body["tool_install_failures"][0]
+    assert failure["name"] == "Camofox"
+    assert failure["message"].startswith("На этой машине не найден Node.js.")
 
 
 def test_install_stage_generic_message_when_run_tool_install_returns_no_dict(logged_in, monkeypatch):
@@ -612,9 +634,10 @@ def test_install_stage_generic_message_when_run_tool_install_returns_no_dict(log
     body = r.json()
 
     assert body["ok"] is True
-    assert body["tool_install_failures"] == [
-        {"name": "Local Browser", "message": wapp._MSG_TOOL_INSTALL_FAILED_GENERIC}
-    ]
+    assert len(body["tool_install_failures"]) == 1
+    failure = body["tool_install_failures"][0]
+    assert failure["name"] == "Local Browser"
+    assert failure["message"].startswith(wapp._MSG_TOOL_INSTALL_FAILED_GENERIC)
 
 
 def test_install_stage_exception_is_caught_and_reported(logged_in, monkeypatch):
@@ -641,9 +664,10 @@ def test_install_stage_exception_is_caught_and_reported(logged_in, monkeypatch):
     body = r.json()
 
     assert body["ok"] is True
-    assert body["tool_install_failures"] == [
-        {"name": "Local Browser", "message": wapp._MSG_TOOL_INSTALL_FAILED_GENERIC}
-    ]
+    assert len(body["tool_install_failures"]) == 1
+    failure = body["tool_install_failures"][0]
+    assert failure["name"] == "Local Browser"
+    assert failure["message"].startswith(wapp._MSG_TOOL_INSTALL_FAILED_GENERIC)
 
 
 def test_install_stage_timeout_reports_honest_message_without_hanging(logged_in, monkeypatch):
