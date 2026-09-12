@@ -1,0 +1,10 @@
+name: nexara
+version: 1.0.0
+description: "Nexara speech-to-text backend (nexara.ru) — OpenAI-compatible /v1/audio/transcriptions, strong Russian support."
+author: NousResearch
+kind: backend
+requires_env:
+  - name: NEXARA_API_KEY
+    description: "Nexara STT API key (starts with nx-)"
+    url: "https://nexara.ru"
+    secret: true
