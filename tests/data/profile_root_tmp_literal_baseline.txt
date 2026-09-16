@@ -1,0 +1,22 @@
+# Базовое множество храповика изоляции профиля.
+# Файлы движка и число мест с литералом /tmp.
+# Числа могут только УМЕНЬШАТЬСЯ — см. tests/test_profile_root_static_guard.py.
+agent/copilot_acp_client.py	1
+hermes_cli/codex_runtime_plugin_migration.py	1
+hermes_cli/gateway.py	1
+hermes_cli/hooks.py	1
+hermes_cli/web_server.py	1
+hermes_constants.py	4
+mini_swe_runner.py	3
+plugins/platforms/line/adapter.py	1
+tools/approval.py	1
+tools/browser_tool.py	1
+tools/code_execution_tool.py	2
+tools/environments/base.py	1
+tools/environments/daytona.py	1
+tools/environments/local.py	4
+tools/environments/vercel_sandbox.py	1
+tools/kanban_tools.py	2
+tools/mcp_tool.py	1
+tools/process_registry.py	1
+tools/tool_result_storage.py	1
