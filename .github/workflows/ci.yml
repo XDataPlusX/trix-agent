@@ -15,16 +15,7 @@ name: CI
 # main-only automation uses protected environments in its own workflows.
 
 on:
-  pull_request:
-  push:
-    # `xdata-agent` is this fork's working branch: all product work lands
-    # there directly, no PR is ever opened, so without it CI never sees the
-    # code it is meant to guard. Pushes here are gated on the pushed range
-    # (see .github/actions/detect-changes), so a docs-only push runs `detect`
-    # plus the four jobs that carry no lane gate (osv-scanner,
-    # infographic-check, and the two `always()` reporters) -- a couple of
-    # minutes, not the full matrix with macOS at 10x billing.
-    branches: [main, xdata-agent]
+  workflow_dispatch:
 
 permissions:
   contents: read

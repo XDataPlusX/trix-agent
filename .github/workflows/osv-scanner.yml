@@ -24,11 +24,6 @@ name: OSV-Scanner
 # a review_status for the unified PR comment.
 
 on:
-  workflow_call:
-  schedule:
-    # Weekly scan against main — catches CVEs published after merge for
-    # deps that haven't changed since.
-    - cron: '0 9 * * 1'
   workflow_dispatch:
 
 permissions:
