@@ -1037,7 +1037,7 @@ class AIAgent:
         if getattr(self, "_last_ctx_overflow_warn", None) != _warn_key:
             self._last_ctx_overflow_warn = _warn_key
             from agent.conversation_compression import (
-                CONTEXT_OVERFLOW_BLOCKED_WARNING_TEMPLATE,
+                _localized_context_overflow_blocked_warning,
             )
             # cooldown + anti-thrash (ineffective) are both "compression blocked".
             if _warn_kind in ("cooldown", "ineffective"):
@@ -1046,7 +1046,7 @@ class AIAgent:
                     provenance=ActivityProvenance.AGENT_COMPRESSION_COOLDOWN,
                 )
             self._emit_warning(
-                CONTEXT_OVERFLOW_BLOCKED_WARNING_TEMPLATE.format(
+                _localized_context_overflow_blocked_warning(
                     tokens=preflight_tokens,
                     threshold=threshold_tokens,
                     reason=reason,
@@ -2572,9 +2572,18 @@ class AIAgent:
                 marker in str(current).lower()
                 for marker in network_resolution_markers
             ):
-                return (
-                    "Hermes can't reach the model provider. You may be offline. "
-                    "Check your internet connection and try again."
+                # RAF-221: this summary reaches clients verbatim (terminal
+                # statuses, the gateway's request_failed interpolation), so
+                # it renders through the catalog and names no upstream brand.
+                from agent.i18n import t
+
+                return t(
+                    "trix.errors.provider.offline_summary",
+                    default=(
+                        "Can't reach the model provider. This is a network "
+                        "problem on this machine, not in your request — "
+                        "please try again later."
+                    ),
                 )
             current = current.__cause__ or current.__context__
 
@@ -7712,11 +7721,19 @@ class AIAgent:
 
     def _toolguard_controlled_halt_response(self, decision: ToolGuardrailDecision) -> str:
         tool = decision.tool_name or "a tool"
-        return (
-            f"I stopped retrying {tool} because it hit the tool-call guardrail "
-            f"({decision.code}) after {decision.count} repeated non-progressing "
-            "attempts. The last tool result explains the blocker; the next step is "
-            "to change strategy instead of repeating the same call."
+        # RAF-221: this string becomes the assistant's reply bubble, so it
+        # renders through the catalog rather than the English literal.
+        from agent.i18n import t
+
+        return t(
+            "trix.agent.toolguard_halt_response",
+            tool=tool,
+            count=decision.count,
+            default=(
+                f"I stopped retrying {tool} after {decision.count} repeated attempts "
+                "without progress. The last tool result explains the blocker; the next "
+                "step is to change strategy instead of repeating the same call."
+            ),
         )
 
     def _append_guardrail_observation(

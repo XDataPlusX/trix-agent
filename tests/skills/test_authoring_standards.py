@@ -29,6 +29,19 @@ MACHINE_LOCAL = re.compile(r"/home/(?!runner\b)[a-z0-9_-]+/|[A-Z]:\\+Users\\+(?!
 # ---------------------------------------------------------------------------
 GRANDFATHER: dict[str, set[str]] = {
     # (empty — the Aug 2026 sweep cleared all mechanical violations)
+
+    # NOT debt — a deliberate product decision (owner, 2026-09-17, RAF-182):
+    # the client-facing Trix skills carry NO `license` frontmatter field.
+    # skill_view returns SKILL.md verbatim (frontmatter included), so a
+    # `license:` value is a fact the model knows and can quote to the
+    # customer; the product stance is that licensing is never discussed in
+    # client speech ("Трикс есть Трикс"). Do not "fix" by re-adding the
+    # field; fix skill_view rendering of frontmatter instead — then these
+    # entries can go.
+    "skills/autonomous-ai-agents/trix-agent": {"fields"},
+    "optional-skills/autonomous-ai-agents/trix-system-admin": {"fields"},
+    "optional-skills/autonomous-ai-agents/trix-business-rollout": {"fields"},
+    "optional-skills/autonomous-ai-agents/trix-file-contour": {"fields"},
 }
 
 

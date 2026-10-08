@@ -360,9 +360,26 @@ def _report_stale_nonstream_kill(
         f"{estimate_request_context_tokens(api_kwargs):,}",
     )
     try:
+        from agent.i18n import t as _client_t
+
+        # ``hint`` may contain an operator-only Codex diagnosis (backend URL,
+        # OAuth-account details, or a config workaround).  Keep that out of
+        # the client bubble; the warning above is already in the server log.
+        client_hint = _client_t(
+            "trix.agent.provider_stale_hint",
+            default="Ending this attempt.",
+        )
         agent._buffer_status(
-            f"⚠️ No response from provider for {int(elapsed)}s "
-            f"(non-streaming, model: {model}). {hint or 'Aborting call.'}"
+            _client_t(
+                "trix.agent.provider_stale_nonstreaming",
+                seconds=int(elapsed),
+                model=model,
+                hint=client_hint,
+                default=(
+                    f"⚠️ No response from provider for {int(elapsed)}s "
+                    f"(non-streaming, model: {model}). {client_hint}"
+                ),
+            )
         )
     except Exception:
         logger.debug("stale status buffering failed", exc_info=True)
@@ -4448,11 +4465,24 @@ def interruptible_streaming_api_call(agent, api_kwargs: dict, *, on_first_delta=
                 _stale_elapsed, _stream_stale_timeout,
                 api_kwargs.get("model", "unknown"), f"{_est_ctx:,}",
             )
+            from agent.i18n import t as _client_t
+
             agent._buffer_status(
-                f"⚠️ No response from provider for {int(_stale_elapsed)}s "
-                f"(model: {api_kwargs.get('model', 'unknown')}, "
-                f"context: ~{_est_ctx:,} tokens). "
-                f"Reconnecting..."
+                # RAF-221: catalog render; the ru copy keeps the honest
+                # "reconnecting" wording without internal detail. The import
+                # is aliased because this function's thread handle is also
+                # named ``t``.
+                _client_t(
+                    "trix.agent.provider_stale_streaming",
+                    seconds=int(_stale_elapsed),
+                    model=api_kwargs.get("model", "unknown"),
+                    tokens=f"{_est_ctx:,}",
+                    default=(
+                        f"⚠️ No response from provider for {int(_stale_elapsed)}s "
+                        f"(model: {api_kwargs.get('model', 'unknown')}). "
+                        f"Reconnecting..."
+                    ),
+                )
             )
             try:
                 _cancel_current_stream_attempt("stale_stream_kill")

@@ -61,11 +61,24 @@ def should_clear_session_stall_notification(
 
 
 def format_session_stall_notification(idle_seconds: float) -> str:
-    """User-facing stall warning (ASCII minutes; matches issue #72016 copy)."""
+    """User-facing stall warning.
+
+    RAF-221: renders from the i18n catalog (``trix.busy.stall_notice``).
+    Upstream's English literal ("⚠️ Agent session appears stalled ... Try
+    /new to reset.") reached Telegram clients verbatim — English, with the
+    internal word "Agent" and a dead "to reset" pointer. The catalog copy
+    names the two live commands (/stop, /new) and no internal nouns.
+    """
+    from agent.i18n import t
+
     mins = max(1, int(idle_seconds // 60))
-    return (
-        f"⚠️ Agent session appears stalled (last activity {mins} min ago). "
-        f"Try /new to reset."
+    return t(
+        "trix.busy.stall_notice",
+        minutes=mins,
+        default=(
+            f"⚠️ Task appears stalled (last activity {mins} min ago). "
+            f"Try /new to reset."
+        ),
     )
 
 

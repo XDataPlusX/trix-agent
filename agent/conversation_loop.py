@@ -162,6 +162,16 @@ _HANDOFF_SKIP_FINAL_RESPONSE = (
 )
 
 
+def _handoff_skip_final_response() -> str:
+    """Catalog render of the sole-handoff skip reply (RAF-221)."""
+    from agent.i18n import t
+
+    return t(
+        "trix.agent.handoff_skip_final",
+        default=_HANDOFF_SKIP_FINAL_RESPONSE,
+    )
+
+
 # Stable prefix of the local interrupt status string emitted when a turn is
 # cancelled while waiting on the provider. Surfaces (ACP, TUI) match on this
 # to treat it as cancellation metadata rather than assistant prose.
@@ -939,6 +949,21 @@ _CONTENT_POLICY_RECOVERY_HINT = (
     "Try rephrasing the request, narrowing the context, or splitting it "
     "into smaller steps."
 )
+
+
+def _CONTENT_POLICY_RECOVERY_HINT_I18N() -> str:
+    """Catalog render of the shared refusal trailer (RAF-221).
+
+    The module-level constant stays as the CLI/``en`` default; clients whose
+    language resolves to Russian read the translated hint instead of the
+    English literal glued onto an otherwise-Russian refusal message.
+    """
+    from agent.i18n import t
+
+    return t(
+        "trix.agent.safety_refusal_hint",
+        default=_CONTENT_POLICY_RECOVERY_HINT,
+    )
 
 
 # Memo for the send-path tool-call argument canonicalization inside
@@ -2435,7 +2460,7 @@ def run_conversation(
                         "handoff would be the sole active user turn (#80622)"
                     )
                     if not final_response:
-                        final_response = _HANDOFF_SKIP_FINAL_RESPONSE
+                        final_response = _handoff_skip_final_response()
                     _turn_exit_reason = "compaction_handoff_not_actionable"
                     break
                 continue
@@ -3113,7 +3138,23 @@ def run_conversation(
                                 _retry.restart_with_redirected_messages = True
                                 break
                             agent._vprint(f"{agent.log_prefix}⚡ Interrupt detected during retry wait, aborting.", force=True)
-                            _interrupt_text = f"Operation interrupted during retry ({_failure_hint}, attempt {retry_count}/{max_retries})."
+                            # RAF-221: the ru catalog drops {_failure_hint}
+                            # here on purpose — it is an English internal
+                            # phrase ("rate limited by upstream provider")
+                            # that would leak jargon into the client reply.
+                            from agent.i18n import t
+
+                            _interrupt_text = t(
+                                "trix.agent.interrupted_during_retry",
+                                attempt=retry_count,
+                                max_retries=max_retries,
+                                default=(
+                                    f"Operation interrupted during retry "
+                                    f"(attempt {retry_count}/"
+                                    f"{max_retries}). Please send your message "
+                                    f"again to continue."
+                                ),
+                            )
                             close_interrupted_tool_sequence(messages, _interrupt_text)
                             agent._persist_session(messages, conversation_history)
                             agent.clear_interrupt()
@@ -3286,16 +3327,32 @@ def run_conversation(
                         )
                     )
 
+                    # RAF-221: refusal reply renders from the catalog; the
+                    # model's own refusal text rides through {text} verbatim.
+                    from agent.i18n import t
+
                     _refusal_detail = (
-                        f"Model's explanation: {_refusal_text}"
+                        t(
+                            "trix.agent.safety_refusal_model_explanation",
+                            text=_refusal_text,
+                            default=f"Model's explanation: {_refusal_text}",
+                        )
                         if _refusal_text
-                        else "The model returned no explanation."
+                        else t(
+                            "trix.agent.safety_refusal_no_explanation",
+                            default="The model returned no explanation.",
+                        )
                     )
-                    _refusal_response = (
-                        "⚠️  The model declined to respond to this request "
-                        "(safety refusal — not a failure on this assistant's side).\n\n"
-                        f"{_refusal_detail}\n\n"
-                        f"{_CONTENT_POLICY_RECOVERY_HINT}"
+                    _refusal_response = t(
+                        "trix.agent.safety_refusal_final_response",
+                        detail=_refusal_detail,
+                        hint=_CONTENT_POLICY_RECOVERY_HINT_I18N(),
+                        default=(
+                            "⚠️  The model declined to respond to this request "
+                            "(safety refusal — not a failure on this assistant's side).\n\n"
+                            f"{_refusal_detail}\n\n"
+                            f"{_CONTENT_POLICY_RECOVERY_HINT}"
+                        ),
                     )
 
                     agent._cleanup_task_resources(effective_task_id)
@@ -3383,13 +3440,23 @@ def run_conversation(
                         # Return a user-friendly message as the response so
                         # CLI (response box) and gateway (chat message) both
                         # display it naturally instead of a suppressed error.
-                        _exhaust_response = (
-                            "⚠️ **Thinking Budget Exhausted**\n\n"
-                            "The model used all its output tokens on reasoning "
-                            "and had none left for the actual response.\n\n"
-                            "To fix this:\n"
-                            "→ Lower reasoning effort: `/thinkon low` or `/thinkon minimal`\n"
-                            "→ Or switch to a larger/non-reasoning model with `/model`"
+                        # RAF-221: renders from the catalog; the EN default
+                        # points at /reasoning (this fork's live command),
+                        # not upstream's /thinkon.
+                        from agent.i18n import t
+
+                        _exhaust_response = t(
+                            "trix.agent.thinking_budget_exhausted",
+                            default=(
+                                "⚠️ **Thinking Budget Exhausted**\n\n"
+                                "The model used all its output tokens on reasoning "
+                                "and had none left for the actual response.\n\n"
+                                "To fix this:\n"
+                                "→ Lower thinking depth: `/reasoning low` or "
+                                "`/reasoning minimal`\n"
+                                "→ Or switch to a larger/non-reasoning model with "
+                                "`/model`"
+                            ),
                         )
                         agent._cleanup_task_resources(effective_task_id)
                         agent._persist_session(messages, conversation_history)
@@ -4759,7 +4826,18 @@ def run_conversation(
                         _retry.restart_with_redirected_messages = True
                         break
                     agent._vprint(f"{agent.log_prefix}⚡ Interrupt detected during error handling, aborting retries.", force=True)
-                    _interrupt_text = f"Operation interrupted: handling API error ({error_type}: {agent._clean_error_message(str(api_error))})."
+                    # RAF-221: ru copy omits {error_type}/{error} — raw
+                    # exception classes/messages are operator detail.
+                    from agent.i18n import t
+
+                    _interrupt_text = t(
+                        "trix.agent.interrupted_api_error",
+                        default=(
+                            "Operation interrupted while handling an API "
+                            "error. Please send your message again to "
+                            "continue."
+                        ),
+                    )
                     close_interrupted_tool_sequence(messages, _interrupt_text)
                     agent._persist_session(messages, conversation_history)
                     agent.clear_interrupt()
@@ -5194,9 +5272,17 @@ def run_conversation(
                             api_messages,
                             remember_model=False,
                         ):
+                            from agent.i18n import t
+
                             agent._buffer_status(
-                                "📐 Compression could not reduce the request further — "
-                                "removed retained vision payloads and retrying..."
+                                t(
+                                    "trix.agent.compression_vision_stripped",
+                                    default=(
+                                        "📐 Compression could not reduce the "
+                                        "request further — removed retained "
+                                        "vision payloads and retrying..."
+                                    ),
+                                )
                             )
                             continue
 
@@ -5207,13 +5293,28 @@ def run_conversation(
                         agent._vprint(f"{agent.log_prefix}   💡 Try /new to start a fresh conversation, or /compress to retry compression.", force=True)
                         logger.error("%s413 payload too large. Cannot compress further.", agent.log_prefix)
                         agent._persist_session(messages, conversation_history)
-                        _final_response = "Request payload too large (413). Cannot compress further."
+                        # RAF-221: the client-visible reply renders from the
+                        # catalog; ``error`` below keeps the English sentinel
+                        # because the gateway's context-failure classifier
+                        # matches these exact keywords.
+                        from agent.i18n import t
+
+                        _final_response = t(
+                            "trix.agent.payload_too_large_final",
+                            default=(
+                                "Request payload too large (413). "
+                                "Cannot compress further."
+                            ),
+                        )
                         return {
                             "final_response": _final_response,
                             "messages": messages,
                             "completed": False,
                             "api_calls": api_call_count,
-                            "error": _final_response,
+                            "error": (
+                                "Request payload too large (413). "
+                                "Cannot compress further."
+                            ),
                             "partial": True,
                             "failed": True,
                             "compression_exhausted": True,
@@ -5768,11 +5869,28 @@ def run_conversation(
                     else:
                         agent._persist_session(messages, conversation_history)
                     if classified.reason == FailoverReason.content_policy_blocked:
-                        _policy_response = (
-                            "⚠️  The model provider's safety filter blocked this request "
-                            "(not a failure on this assistant's side).\n\n"
-                            f"Provider message: {_nonretryable_summary}\n\n"
-                            f"{_CONTENT_POLICY_RECOVERY_HINT}"
+                        from agent.i18n import t
+
+                        _policy_response = t(
+                            "trix.agent.safety_refusal_final_response",
+                            detail=t(
+                                "trix.agent.safety_refusal_model_explanation",
+                                text=_nonretryable_summary,
+                                default=(
+                                    "⚠️  The model provider's safety filter blocked "
+                                    "this request (not a failure on this "
+                                    "assistant's side).\n\n"
+                                    f"Provider message: {_nonretryable_summary}"
+                                ),
+                            ),
+                            hint=_CONTENT_POLICY_RECOVERY_HINT_I18N(),
+                            default=(
+                                "⚠️  The model provider's safety filter blocked "
+                                "this request (not a failure on this assistant's "
+                                "side).\n\n"
+                                f"Provider message: {_nonretryable_summary}\n\n"
+                                f"{_CONTENT_POLICY_RECOVERY_HINT}"
+                            ),
                         )
                         return _content_policy_blocked_result(
                             messages,
@@ -5895,9 +6013,37 @@ def run_conversation(
                             model=_model,
                         )
                     elif is_rate_limited:
-                        agent._emit_status(f"❌ Rate limited after {max_retries} retries — {_final_summary}")
+                        # RAF-221: the technical summary stays in the log
+                        # (the _vprint right below + logger.error above); the
+                        # client reads an honest, localized sentence instead
+                        # of an English one-liner with an HTTP body glued on.
+                        from agent.i18n import t
+
+                        agent._emit_status(
+                            t(
+                                "trix.agent.rate_limited_exhausted",
+                                retries=max_retries,
+                                default=(
+                                    f"❌ Rate limited after {max_retries} retries "
+                                    f"— the turn did not finish. Please try again "
+                                    f"a little later."
+                                ),
+                            )
+                        )
                     else:
-                        agent._emit_status(f"❌ API failed after {max_retries} retries — {_final_summary}")
+                        from agent.i18n import t
+
+                        agent._emit_status(
+                            t(
+                                "trix.agent.api_failed_exhausted",
+                                retries=max_retries,
+                                default=(
+                                    f"❌ API failed after {max_retries} retries "
+                                    f"— the turn did not finish. Please try again "
+                                    f"a little later."
+                                ),
+                            )
+                        )
                     agent._vprint(f"{agent.log_prefix}   💀 Final error: {_final_summary}", force=True)
 
                     # Detect SSE stream-drop pattern (e.g. "Network
@@ -6016,7 +6162,19 @@ def run_conversation(
                         # the same link + label from one signal (see helper).
                         _billing_block = _billing_block_dict(_provider, _base, _model, _billing_guidance)
                     else:
-                        _final_response = f"API call failed after {max_retries} retries: {_final_summary}"
+                        # RAF-221: raw English summary + HTTP detail goes to
+                        # the log, not to the client's reply bubble. The ru
+                        # catalog says what happened and what to do next.
+                        from agent.i18n import t
+
+                        _final_response = t(
+                            "trix.agent.api_failed_final",
+                            default=(
+                                "The API call failed after multiple retries — "
+                                "the turn did not finish. Send your message "
+                                "again in a little while and I will start over."
+                            ),
+                        )
                     if _is_thinking_timeout:
                         # Thinking-timeout guidance overrides the generic
                         # stream-drop guidance — the latter is wrong for
@@ -6033,13 +6191,22 @@ def run_conversation(
                             model=_model,
                         )
                     elif _is_stream_drop:
-                        _final_response += (
-                            "\n\nThe provider's stream connection keeps "
-                            "dropping — this often happens when generating "
-                            "very large tool call responses (e.g. write_file "
-                            "with long content). Try asking me to use "
-                            "execute_code with Python's open() for large "
-                            "files, or to write in smaller sections."
+                        # RAF-221: catalog-rendered trailer. The ru copy
+                        # drops upstream's advice to ask for execute_code /
+                        # Python open() — internal tool names a Telegram
+                        # client never sees.
+                        from agent.i18n import t
+
+                        _final_response += t(
+                            "trix.agent.stream_drop_hint",
+                            default=(
+                                "\n\nThe provider's stream connection keeps "
+                                "dropping — this often happens when generating "
+                                "very large tool call responses (e.g. write_file "
+                                "with long content). Try asking me to use "
+                                "execute_code with Python's open() for large "
+                                "files, or to write in smaller sections."
+                            ),
                         )
                     return {
                         "final_response": _final_response,
@@ -6091,8 +6258,30 @@ def run_conversation(
                         _policy_note = " (Z.AI Coding overload adaptive long backoff)"
                     elif _backoff_policy == "zai_coding_overload_short":
                         _policy_note = " (Z.AI Coding overload short retry)"
-                    _wait_reason = "Provider overloaded" if _is_zai_coding_overload and not is_rate_limited else "Rate limited"
-                    _rate_limit_status = f"⏱️ {_wait_reason}. Waiting {wait_time:.1f}s (attempt {retry_count + 1}/{max_retries}){_policy_note}..."
+                    _is_overload_without_rate_limit = (
+                        _is_zai_coding_overload and not is_rate_limited
+                    )
+                    # RAF-221: the "Provider overloaded. Waiting ..." variant
+                    # is DELIVERED to chat clients (the gateway noise filter
+                    # does not match it), so it renders through the catalog
+                    # and drops the internal backoff-policy note. The
+                    # "Rate limited. Waiting" variant is deliberately kept as
+                    # the English literal: the noise filter suppresses it by
+                    # matching that English text, and translating it would
+                    # un-suppress retry chatter (spec Ruling 8).
+                    if _is_overload_without_rate_limit:
+                        from hermes_cli.trix_provider_errors import (
+                            provider_overloaded_wait_status,
+                        )
+
+                        _rate_limit_status = provider_overloaded_wait_status(
+                            seconds=f"{wait_time:.1f}",
+                            attempt=retry_count + 1,
+                            max_retries=max_retries,
+                        )
+                    else:
+                        _wait_reason = "Rate limited"
+                        _rate_limit_status = f"⏱️ {_wait_reason}. Waiting {wait_time:.1f}s (attempt {retry_count + 1}/{max_retries}){_policy_note}..."
                     # Normal retries are buffered to avoid noisy transient chatter. Long
                     # Z.AI Coding waits are different: they can last minutes, so surface
                     # progress immediately instead of making the TUI look frozen.
@@ -6124,7 +6313,17 @@ def run_conversation(
                             _retry.restart_with_redirected_messages = True
                             break
                         agent._vprint(f"{agent.log_prefix}⚡ Interrupt detected during retry wait, aborting.", force=True)
-                        _interrupt_text = f"Operation interrupted: retrying API call after error (retry {retry_count}/{max_retries})."
+                        from agent.i18n import t
+
+                        _interrupt_text = t(
+                            "trix.agent.interrupted_retry",
+                            retry=retry_count,
+                            max_retries=max_retries,
+                            default=(
+                                f"Operation interrupted: retrying API call after "
+                                f"error (retry {retry_count}/{max_retries})."
+                            ),
+                        )
                         close_interrupted_tool_sequence(messages, _interrupt_text)
                         agent._persist_session(messages, conversation_history)
                         agent.clear_interrupt()
@@ -6180,7 +6379,7 @@ def run_conversation(
                     "handoff would be the sole active user turn (#80622)"
                 )
                 if not final_response:
-                    final_response = _HANDOFF_SKIP_FINAL_RESPONSE
+                    final_response = _handoff_skip_final_response()
                 _turn_exit_reason = "compaction_handoff_not_actionable"
                 break
             # In-loop compression rebuilt `messages` with fresh compaction
@@ -6943,8 +7142,14 @@ def run_conversation(
                     decision = agent._tool_guardrail_halt_decision
                     _turn_exit_reason = "guardrail_halt"
                     final_response = agent._toolguard_controlled_halt_response(decision)
+                    from agent.i18n import t
+
                     agent._emit_status(
-                        f"⚠️ Tool guardrail halted {decision.tool_name}: {decision.code}"
+                        t(
+                            "trix.agent.toolguard_halted",
+                            tool=decision.tool_name,
+                            default=f"⚠️ Stopped a repeating {decision.tool_name} call",
+                        )
                     )
                     messages.append({"role": "assistant", "content": final_response})
                     # Emit the halt message to the client so it's not
@@ -7067,7 +7272,7 @@ def run_conversation(
                                 "active user turn (#80622)"
                             )
                             if not final_response:
-                                final_response = _HANDOFF_SKIP_FINAL_RESPONSE
+                                final_response = _handoff_skip_final_response()
                             _turn_exit_reason = "compaction_handoff_not_actionable"
                             break
                 elif agent.compression_enabled:
@@ -7180,9 +7385,16 @@ def run_conversation(
                             "— using as final response",
                             len(_recovered),
                         )
+                        from agent.i18n import t
+
                         agent._emit_status(
-                            "↻ Stream interrupted — using delivered content "
-                            "as final response"
+                            t(
+                                "trix.agent.stream_interrupted_partial",
+                                default=(
+                                    "↻ Stream interrupted — using delivered "
+                                    "content as final response"
+                                ),
+                            )
                         )
                         final_response = _recovered
                         # Streaming delivered a fragment, not a confirmed
@@ -7320,9 +7532,17 @@ def run_conversation(
                             "prefilling to continue (%d/2)",
                             agent._thinking_prefill_retries,
                         )
+                        from agent.i18n import t
+
                         agent._buffer_status(
-                            f"↻ Thinking-only response — prefilling to continue "
-                            f"({agent._thinking_prefill_retries}/2)"
+                            t(
+                                "trix.agent.thinking_only_prefill",
+                                attempt=agent._thinking_prefill_retries,
+                                default=(
+                                    f"↻ Thinking-only response — prefilling to "
+                                    f"continue ({agent._thinking_prefill_retries}/2)"
+                                ),
+                            )
                         )
                         interim_msg = agent._build_assistant_message(
                             assistant_message, "incomplete"
@@ -7379,9 +7599,16 @@ def run_conversation(
                         while time.time() < sleep_end:
                             if agent._interrupt_requested:
                                 agent._vprint(f"{agent.log_prefix}⚡ Interrupt detected during empty-response retry wait, aborting.", force=True)
-                                _interrupt_text = (
-                                    f"Operation interrupted: retrying empty response from model "
-                                    f"(retry {agent._empty_content_retries}/3)."
+                                from agent.i18n import t
+
+                                _interrupt_text = t(
+                                    "trix.agent.interrupted_empty_retry",
+                                    retry=agent._empty_content_retries,
+                                    default=(
+                                        f"Operation interrupted: retrying empty "
+                                        f"response from model "
+                                        f"(retry {agent._empty_content_retries}/3)."
+                                    ),
                                 )
                                 close_interrupted_tool_sequence(messages, _interrupt_text)
                                 agent._persist_session(messages, conversation_history)
@@ -7484,9 +7711,16 @@ def run_conversation(
                             "after exhausting retries and fallback. "
                             "Reasoning: %s", reasoning_preview,
                         )
+                        from agent.i18n import t
+
                         agent._emit_status(
-                            "⚠️ Model produced reasoning but no visible "
-                            "response after all retries. Returning empty."
+                            t(
+                                "trix.agent.reasoning_only_terminal",
+                                default=(
+                                    "⚠️ Model produced reasoning but no visible "
+                                    "response after all retries. Returning empty."
+                                ),
+                            )
                         )
                     else:
                         logger.warning(
@@ -7532,12 +7766,27 @@ def run_conversation(
                     # (clearly labeled as such) strictly more useful.
                     # Idea credit: PR #48795 (@ligl0325).
                     if reasoning_text:
-                        final_response = (
-                            "⚠️ The model produced only internal reasoning and "
-                            "no final answer, despite retries"
-                            + (" and fallback" if agent._fallback_chain else "")
-                            + ". Its last reasoning, which may contain the "
-                            "answer:\n\n" + reasoning_preview
+                        from agent.i18n import t
+
+                        _fallback_suffix = (
+                            t(
+                                "trix.agent.reasoning_only_fallback_suffix",
+                                default=" and fallback",
+                            )
+                            if agent._fallback_chain
+                            else ""
+                        )
+                        final_response = t(
+                            "trix.agent.reasoning_only_final",
+                            with_fallback=_fallback_suffix,
+                            preview=reasoning_preview,
+                            default=(
+                                "⚠️ The model produced only internal reasoning and "
+                                "no final answer, despite retries"
+                                + (" and fallback" if agent._fallback_chain else "")
+                                + ". Its last reasoning, which may contain the "
+                                "answer:\n\n" + reasoning_preview
+                            ),
                         )
                     else:
                         final_response = "(empty)"
@@ -7626,9 +7875,17 @@ def run_conversation(
                         "(retry %d/3, model=%s provider=%s)",
                         agent._dropped_toolcall_retries, agent.model, agent.provider,
                     )
+                    from agent.i18n import t
+
                     agent._emit_status(
-                        "↻ Model signaled a tool call but sent none — "
-                        f"re-prompting ({agent._dropped_toolcall_retries}/3)"
+                        t(
+                            "trix.agent.dropped_toolcall_retry",
+                            attempt=agent._dropped_toolcall_retries,
+                            default=(
+                                "↻ Model signaled a tool call but sent none — "
+                                f"re-prompting ({agent._dropped_toolcall_retries}/3)"
+                            ),
+                        )
                     )
                     # Both halves of the re-prompt pair are ephemeral recovery
                     # scaffolding (mirrors the empty-response nudge pattern):

@@ -199,9 +199,10 @@ def _model_picker_button_labels(lang: str | None = None) -> dict[str, str]:
     and the model-selection screen (``_build_model_keyboard``), plus the
     expensive-model confirmation row built inline in
     ``_handle_model_picker_callback``. ``callback_data`` (``mp:``, ``mm:``,
-    ``mg:``, ``mpv:``, ``mc:``, ``mb:``, ``mx:``, ``mpg:``) is a protocol the
-    callback handler parses -- only the visible label text comes from the
-    catalog, same pattern as ``_approval_button_labels``.
+    ``mg:``, ``mpv:``, ``mc:``, ``mb:``, ``mx:``, ``mpg:``, ``md:``,
+    ``mrd:``) is a protocol the callback handler parses -- only the visible
+    label text comes from the catalog, same pattern as
+    ``_approval_button_labels``.
     """
     from agent.i18n import t
 
@@ -211,6 +212,9 @@ def _model_picker_button_labels(lang: str | None = None) -> dict[str, str]:
         "back": t("trix.cmd.model.picker.button_back", lang=lang),
         "cancel": t("trix.cmd.model.picker.button_cancel", lang=lang),
         "switch_anyway": t("trix.cmd.model.picker.button_switch_anyway", lang=lang),
+        "make_default": t("trix.cmd.model.picker.button_make_default", lang=lang),
+        "reset_default": t("trix.cmd.model.picker.button_reset_default", lang=lang),
+        "close": t("trix.cmd.model.picker.button_close", lang=lang),
     }
 
 
@@ -1048,6 +1052,10 @@ class TelegramAdapter(BasePlatformAdapter):
         )
         # Interactive model picker state per chat
         self._model_picker_state: Dict[str, dict] = {}
+        # Post-switch "make default" affordance state per chat (RAF-189):
+        # lives only between a successful model switch and the follow-up
+        # md:/mx tap, so a stale browsing keyboard can never feed it.
+        self._model_picker_default_state: Dict[str, dict] = {}
         self._choice_picker_state: Dict[str, dict] = {}
         # Approval button state: message_id → session_key
         self._approval_state: Dict[int, str] = {}
@@ -6059,11 +6067,26 @@ class TelegramAdapter(BasePlatformAdapter):
         session_key: str,
         on_model_selected,
         metadata: Optional[Dict[str, Any]] = None,
+        levels_text: Optional[str] = None,
+        on_set_default=None,
+        on_reset_default=None,
     ) -> SendResult:
         """Send an interactive inline-keyboard model picker.
 
         Two-step drill-down: provider selection → model selection.
         Edits the same message in-place as the user navigates.
+
+        RAF-189 affordances (all optional; older call sites that omit them
+        get the legacy behavior byte-for-byte):
+
+        * ``levels_text`` — extra status block (session / personal default
+          / server default) appended to the provider-selection screen.
+        * ``on_set_default(chat_id, model_id, provider_slug)`` — when
+          given, a successful model switch leaves a "⭐ Make default"
+          button under the switch confirmation instead of closing.
+        * ``on_reset_default(chat_id)`` — when given (caller passes it
+          only when a personal default is set), the provider screen gets a
+          "⭐ Reset default" button next to Cancel.
         """
         if not self._bot:
             return SendResult(success=False, error="Not connected")
@@ -6076,11 +6099,18 @@ class TelegramAdapter(BasePlatformAdapter):
 
         try:
             # Build provider buttons — folds provider groups (display only).
-            keyboard, provider_page_info = self._build_provider_keyboard(providers, 0)
+            keyboard, provider_page_info = self._build_provider_keyboard(
+                providers, 0, reset_default=on_reset_default is not None
+            )
 
             provider_label = get_label(current_provider)
             text = self.format_message(
-                self._model_picker_provider_text(current_model, provider_label, provider_page_info)
+                self._model_picker_provider_text(
+                    current_model,
+                    provider_label,
+                    provider_page_info,
+                    levels_text=levels_text,
+                )
             )
 
             thread_id = metadata.get("thread_id") if metadata else None
@@ -6110,6 +6140,9 @@ class TelegramAdapter(BasePlatformAdapter):
                 "current_model": current_model,
                 "current_provider": current_provider,
                 "provider_page": 0,
+                "levels_text": levels_text,
+                "on_set_default": on_set_default,
+                "on_reset_default": on_reset_default,
             }
 
             return SendResult(success=True, message_id=str(msg.message_id))
@@ -6246,6 +6279,7 @@ class TelegramAdapter(BasePlatformAdapter):
 
     def _model_picker_provider_text(
         self, current_model: Optional[str], provider_label: str, provider_page_info: str,
+        levels_text: Optional[str] = None,
     ) -> str:
         """Localized text for the /model picker's provider-selection screen.
 
@@ -6253,18 +6287,26 @@ class TelegramAdapter(BasePlatformAdapter):
         provider-page navigation, "back" from a provider family) so the three
         call sites can't drift out of sync the way the English literal did
         (see docs/product/plans/2026-09-01-client-command-surface.md Task 7).
+
+        ``levels_text`` (RAF-189, optional) is a pre-localized multi-line
+        status block (session / personal default / server default) appended
+        under the current-model line.
         """
         from agent.i18n import t
 
         model_label = current_model or t("trix.cmd.model.picker.unknown")
-        return "\n".join((
+        lines = [
             f"⚙ *{t('trix.cmd.model.picker.header')}*",
             "",
             f"{t('trix.cmd.model.picker.current_model')}: `{model_label}`",
             f"{t('trix.cmd.model.picker.provider')}: {provider_label}",
-            "",
-            f"{t('trix.cmd.model.picker.select_provider')}{provider_page_info}",
-        ))
+        ]
+        if levels_text:
+            lines.append("")
+            lines.extend(str(levels_text).splitlines())
+        lines.append("")
+        lines.append(f"{t('trix.cmd.model.picker.select_provider')}{provider_page_info}")
+        return "\n".join(lines)
 
     def _model_picker_more_available(self, total: int, shown: int) -> str:
         """Localized '+N more — type /model <name> directly' hint, or ''."""
@@ -6297,7 +6339,9 @@ class TelegramAdapter(BasePlatformAdapter):
             t("trix.cmd.model.picker.select_provider"),
         ))
 
-    def _build_provider_keyboard(self, providers: list, page: int = 0) -> tuple:
+    def _build_provider_keyboard(
+        self, providers: list, page: int = 0, reset_default: bool = False
+    ) -> tuple:
         """Build the paginated top-level provider keyboard, folding groups.
 
         Provider families (Kimi/Moonshot, MiniMax, xAI Grok, ...) collapse to
@@ -6306,6 +6350,10 @@ class TelegramAdapter(BasePlatformAdapter):
         member) render as direct ``mp:<slug>`` buttons. Grouping mirrors the
         CLI ``hermes model`` picker via the shared ``group_providers`` fold,
         so all surfaces stay consistent.
+
+        ``reset_default`` (RAF-189) adds a "⭐ Reset default" button beside
+        Cancel — the caller passes it only when the user HAS a personal
+        default to reset.
         """
         try:
             from hermes_cli.models import group_providers
@@ -6362,7 +6410,14 @@ class TelegramAdapter(BasePlatformAdapter):
                 nav.append(InlineKeyboardButton(button_labels["next"], callback_data=f"mpv:{page + 1}"))
             rows.append(nav)
 
-        rows.append([InlineKeyboardButton(button_labels["cancel"], callback_data="mx")])
+        bottom_row = [InlineKeyboardButton(button_labels["cancel"], callback_data="mx")]
+        if reset_default:
+            # Placed BEFORE Cancel in the same row: ⭐ reset, ✗ cancel.
+            bottom_row.insert(
+                0,
+                InlineKeyboardButton(button_labels["reset_default"], callback_data="mrd:"),
+            )
+        rows.append(bottom_row)
 
         return InlineKeyboardMarkup(rows), page_meta["page_info"]
 
@@ -6433,11 +6488,92 @@ class TelegramAdapter(BasePlatformAdapter):
             user_name=getattr(query.from_user, "first_name", None),
         )
 
+    def _stage_post_switch_default(
+        self, chat_id: str, state: dict, model_id: str, provider_slug: str
+    ):
+        """Stage the post-switch "⭐ Make default" affordance (RAF-189).
+
+        Returns the InlineKeyboardMarkup to attach under the switch
+        confirmation, or ``None`` when the gateway did not wire
+        ``on_set_default`` (legacy callers keep the button-less behavior).
+        The compact state for the follow-up ``md:`` tap is stored only when
+        the keyboard is offered.
+        """
+        callback = state.get("on_set_default")
+        if not callback:
+            return None
+        button_labels = _model_picker_button_labels()
+        self._model_picker_default_state[str(chat_id)] = {
+            "model_id": model_id,
+            "provider_slug": provider_slug,
+            "on_set_default": callback,
+        }
+        return InlineKeyboardMarkup(
+            [
+                [InlineKeyboardButton(button_labels["make_default"], callback_data="md:")],
+                [InlineKeyboardButton(button_labels["close"], callback_data="mx")],
+            ]
+        )
+
+    async def _handle_model_default_callback(self, query, chat_id: str) -> None:
+        """Handle the post-switch "⭐ Make default" tap (``md:``)."""
+        from agent.i18n import t
+
+        dstate = self._model_picker_default_state.get(chat_id)
+        callback = dstate.get("on_set_default") if dstate else None
+        if not callback:
+            await query.answer(text=t("trix.cmd.model.picker.expired"))
+            return
+        # Same authorization gate as the switch branches: setting a
+        # personal default is a persistent state change.
+        if not self._model_picker_switch_authorized(query):
+            await _answer_callback_denied(query, t("trix.cmd.shared.not_authorized_setting"))
+            return
+
+        failed = False
+        try:
+            result_text = await callback(
+                chat_id, dstate.get("model_id"), dstate.get("provider_slug")
+            )
+        except Exception as exc:
+            logger.error("Model picker set-default failed: %s", exc)
+            result_text = t("trix.cmd.model.picker.switch_error", error=exc)
+            failed = True
+
+        try:
+            await query.edit_message_text(
+                text=self.format_message(result_text),
+                parse_mode=ParseMode.MARKDOWN_V2,
+                reply_markup=None,
+            )
+        except Exception:
+            try:
+                await query.edit_message_text(
+                    text=result_text,
+                    parse_mode=None,
+                    reply_markup=None,
+                )
+            except Exception:
+                pass
+        await query.answer(
+            text=t("trix.cmd.model.picker.switch_failed")
+            if failed
+            else t("trix.cmd.model.picker.default_set")
+        )
+        self._model_picker_default_state.pop(chat_id, None)
+
     async def _handle_model_picker_callback(
         self, query, data: str, chat_id: str
     ) -> None:
-        """Handle model picker inline keyboard callbacks (mp:/mm:/mc:/mb:/mx:/mg:)."""
+        """Handle model picker inline keyboard callbacks (mp:/mm:/mc:/mb:/mx:/mg:/md:/mrd:)."""
         from agent.i18n import t
+
+        # RAF-189: "⭐ Make default" tap after a completed switch. Lives in
+        # its own compact state because the browsing state is popped the
+        # moment the switch lands — handled before that early return.
+        if data.startswith("md:"):
+            await self._handle_model_default_callback(query, chat_id)
+            return
 
         state = self._model_picker_state.get(chat_id)
         if not state:
@@ -6534,7 +6670,9 @@ class TelegramAdapter(BasePlatformAdapter):
 
             state["provider_page"] = page
             keyboard, provider_page_info = self._build_provider_keyboard(
-                state["providers"], page
+                state["providers"],
+                page,
+                reset_default=state.get("on_reset_default") is not None,
             )
 
             try:
@@ -6545,7 +6683,10 @@ class TelegramAdapter(BasePlatformAdapter):
             await query.edit_message_text(
                 text=self.format_message(
                     self._model_picker_provider_text(
-                        state["current_model"], provider_label, provider_page_info
+                        state["current_model"],
+                        provider_label,
+                        provider_page_info,
+                        levels_text=state.get("levels_text"),
                     )
                 ),
                 parse_mode=ParseMode.MARKDOWN_V2,
@@ -6590,18 +6731,24 @@ class TelegramAdapter(BasePlatformAdapter):
                 result_text = t("trix.cmd.model.picker.switch_error", error=exc)
                 switch_failed = True
 
+            # RAF-189: offer "⭐ Make default" under the confirmation when
+            # the gateway wired the affordance. The browsing state below is
+            # still popped — the follow-up md: tap reads the compact
+            # post-switch state staged here.
+            _default_kb = self._stage_post_switch_default(chat_id, state, model_id, provider_slug)
+
             try:
                 await query.edit_message_text(
                     text=self.format_message(result_text),
                     parse_mode=ParseMode.MARKDOWN_V2,
-                    reply_markup=None,
+                    reply_markup=_default_kb,
                 )
             except Exception:
                 try:
                     await query.edit_message_text(
                         text=result_text,
                         parse_mode=None,
-                        reply_markup=None,
+                        reply_markup=_default_kb,
                     )
                 except Exception:
                     pass
@@ -6684,12 +6831,16 @@ class TelegramAdapter(BasePlatformAdapter):
                 result_text = t("trix.cmd.model.picker.switch_error", error=exc)
                 switch_failed = True
 
+            # RAF-189: offer "⭐ Make default" under the confirmation when
+            # the gateway wired the affordance (see the mc: branch above).
+            _default_kb = self._stage_post_switch_default(chat_id, state, model_id, provider_slug)
+
             # Edit message to show confirmation, remove buttons
             try:
                 await query.edit_message_text(
                     text=self.format_message(result_text),
                     parse_mode=ParseMode.MARKDOWN_V2,
-                    reply_markup=None,
+                    reply_markup=_default_kb,
                 )
             except Exception:
                 # Markdown parse failure — retry as plain text
@@ -6697,7 +6848,7 @@ class TelegramAdapter(BasePlatformAdapter):
                     await query.edit_message_text(
                         text=result_text,
                         parse_mode=None,
-                        reply_markup=None,
+                        reply_markup=_default_kb,
                     )
                 except Exception:
                     pass
@@ -6709,6 +6860,49 @@ class TelegramAdapter(BasePlatformAdapter):
 
             # Clean up state
             self._model_picker_state.pop(chat_id, None)
+
+        elif data.startswith("mrd:"):
+            # --- Reset personal default (RAF-189) ---
+            callback = state.get("on_reset_default")
+            if not callback:
+                await query.answer(text=t("trix.cmd.model.picker.expired"))
+                return
+            # Same authorization gate as the switch branches: resetting a
+            # personal default is a persistent state change.
+            if not self._model_picker_switch_authorized(query):
+                await _answer_callback_denied(query, t("trix.cmd.shared.not_authorized_setting"))
+                return
+
+            reset_failed = False
+            try:
+                result_text = await callback(chat_id)
+            except Exception as exc:
+                logger.error("Model picker reset-default failed: %s", exc)
+                result_text = t("trix.cmd.model.picker.switch_error", error=exc)
+                reset_failed = True
+
+            try:
+                await query.edit_message_text(
+                    text=self.format_message(result_text),
+                    parse_mode=ParseMode.MARKDOWN_V2,
+                    reply_markup=None,
+                )
+            except Exception:
+                try:
+                    await query.edit_message_text(
+                        text=result_text,
+                        parse_mode=None,
+                        reply_markup=None,
+                    )
+                except Exception:
+                    pass
+            await query.answer(
+                text=t("trix.cmd.model.picker.switch_failed")
+                if reset_failed
+                else t("trix.cmd.model.picker.default_reset")
+            )
+            self._model_picker_state.pop(chat_id, None)
+            self._model_picker_default_state.pop(chat_id, None)
 
         elif data.startswith("mpg:"):
             # --- Provider group selected: show member providers ---
@@ -6755,7 +6949,9 @@ class TelegramAdapter(BasePlatformAdapter):
             # --- Back to provider list (folds groups) ---
             page = int(state.get("provider_page", 0) or 0)
             keyboard, provider_page_info = self._build_provider_keyboard(
-                state["providers"], page
+                state["providers"],
+                page,
+                reset_default=state.get("on_reset_default") is not None,
             )
 
             try:
@@ -6766,7 +6962,10 @@ class TelegramAdapter(BasePlatformAdapter):
             await query.edit_message_text(
                 text=self.format_message(
                     self._model_picker_provider_text(
-                        state["current_model"], provider_label, provider_page_info
+                        state["current_model"],
+                        provider_label,
+                        provider_page_info,
+                        levels_text=state.get("levels_text"),
                     )
                 ),
                 parse_mode=ParseMode.MARKDOWN_V2,
@@ -6777,6 +6976,7 @@ class TelegramAdapter(BasePlatformAdapter):
         elif data == "mx":
             # --- Cancel ---
             self._model_picker_state.pop(chat_id, None)
+            self._model_picker_default_state.pop(chat_id, None)
             await query.edit_message_text(
                 text=t("trix.cmd.model.picker.cancelled"),
                 reply_markup=None,
@@ -6830,7 +7030,7 @@ class TelegramAdapter(BasePlatformAdapter):
         query_user_name = getattr(query.from_user, "first_name", None)
 
         # --- Model picker callbacks ---
-        if data.startswith(("mp:", "mpg:", "mpv:", "mm:", "mc:", "mb", "mx", "mg:")):
+        if data.startswith(("mp:", "mpg:", "mpv:", "mm:", "mc:", "mb", "mx", "mg:", "md:", "mrd:")):
             chat_id = str(query.message.chat_id) if query.message else None
             if chat_id:
                 await self._handle_model_picker_callback(query, data, chat_id)

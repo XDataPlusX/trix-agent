@@ -57,6 +57,22 @@ def test_backend_is_never_local_in_a_fresh_profile(profile_env):
     assert created["terminal"]["backend"] != "local"
 
 
+def test_new_profile_starts_with_approvals_off(profile_env):
+    """Свежий профиль создаётся с approvals.mode: off (RAF-181).
+
+    Подтверждения не должны останавливать агента вопросами; жёсткие
+    запреты (hardline floor) и approvals.deny от значения mode не зависят.
+    Литерал, а не сравнение с шаблоном: у дефолта теперь есть владелец
+    решения, и тихий откат к manual/smart обязан краснеть здесь, а не
+    только в тесте шаблона.
+    """
+    from hermes_cli.profiles import create_profile
+
+    profile_dir = create_profile("probe4")
+    created = yaml.safe_load((profile_dir / "config.yaml").read_text(encoding="utf-8"))
+    assert created["approvals"]["mode"] == "off"
+
+
 def test_clone_still_wins_over_the_template(profile_env, tmp_path):
     """--clone копирует конфиг источника; шаблон не должен его перебивать."""
     from hermes_cli.profiles import create_profile

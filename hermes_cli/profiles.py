@@ -85,6 +85,82 @@ _CLONE_ALL_STRIP: list[str] = [
     "processes.json",
 ]
 
+# Multiplexer keys stripped from a cloned config.yaml unless the caller
+# explicitly passes ``keep_multiplex=True`` (RAF-191). Incident 2026-09-17:
+# a clone of the default profile — the host's multiplexer — inherited these
+# byte-for-byte and became a "second multiplexer": its gateway tried to
+# serve the default profile with the MAIN bot token (409 conflict) and its
+# empty per-profile secret scope fail-closed the platform allowlist gate.
+# Both spellings are stripped: legacy top-level keys and ``gateway:``-nested
+# ones (the gateway loader and the lifecycle guard accept either).
+_MULTIPLEX_CLONE_STRIP_KEYS = (
+    "multiplex_profiles",
+    "profile_routes",
+    "multiplex_profile_allowlist",
+)
+
+
+def _strip_clone_multiplex_keys(config_path: Path, profile_name: str) -> bool:
+    """Remove multiplexer keys from a freshly cloned config.yaml (RAF-191).
+
+    Multiplexing belongs to exactly one config on a host — the default
+    profile's. A clone keeps it only when the caller passes
+    ``keep_multiplex=True`` (CLI: ``hermes profile create --keep-multiplex``).
+
+    Returns ``True`` when the file was rewritten. Configs without multiplex
+    keys are left untouched (no rewrite, no comment loss).
+    """
+    import yaml
+
+    try:
+        raw = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    except Exception:
+        logger.warning(
+            "Could not re-read %s to strip multiplexer keys — the clone may "
+            "inherit gateway.multiplex_profiles and conflict with the default "
+            "gateway (RAF-191); verify manually.",
+            config_path,
+            exc_info=True,
+        )
+        return False
+    if not isinstance(raw, dict):
+        return False
+
+    changed = False
+    for key in _MULTIPLEX_CLONE_STRIP_KEYS:
+        if key in raw:
+            del raw[key]
+            changed = True
+    gateway_cfg = raw.get("gateway")
+    if isinstance(gateway_cfg, dict):
+        for key in _MULTIPLEX_CLONE_STRIP_KEYS:
+            if key in gateway_cfg:
+                del gateway_cfg[key]
+                changed = True
+    if not changed:
+        return False
+
+    try:
+        config_path.write_text(
+            yaml.safe_dump(raw, sort_keys=False, allow_unicode=True),
+            encoding="utf-8",
+        )
+    except Exception:
+        logger.warning(
+            "Failed to rewrite %s without multiplexer keys (RAF-191)",
+            config_path,
+            exc_info=True,
+        )
+        return False
+    logger.warning(
+        "Stripped gateway.multiplex_profiles / profile_routes / "
+        "multiplex_profile_allowlist from clone '%s' — a clone must not "
+        "become a second multiplexer (incident 2026-09-17). Pass "
+        "--keep-multiplex to preserve them.",
+        profile_name,
+    )
+    return True
+
 # Infrastructure artifacts excluded from --clone-all when the source is the
 # default profile (``~/.hermes``).  Named profiles never contain these
 # directories at root, so the exclusion is gated to avoid silently dropping
@@ -1052,6 +1128,7 @@ def create_profile(
     no_alias: bool = False,
     no_skills: bool = False,
     description: Optional[str] = None,
+    keep_multiplex: bool = False,
 ) -> Path:
     """Create a new profile directory.
 
@@ -1074,6 +1151,12 @@ def create_profile(
         a marker file so ``hermes update`` skips re-seeding this profile's
         skills. Mutually exclusive with ``clone_config``/``clone_all`` (those
         explicitly copy skills from the source).
+    keep_multiplex:
+        If True, keep the multiplexer keys (``gateway.multiplex_profiles``,
+        ``profile_routes``, ``multiplex_profile_allowlist``) in a cloned
+        config.yaml. By default they are stripped: a clone must not become a
+        "second multiplexer" double-binding the default gateway's bot tokens
+        (RAF-191, incident 2026-09-17).
 
     Returns
     -------
@@ -1317,6 +1400,16 @@ def create_profile(
     # explicit runtime/history stripping above.
     if not clone_all:
         _migrate_profile_config_if_outdated(profile_dir)
+
+    # RAF-191: a cloned config must not carry the multiplexer keys — the
+    # clone would become a "second multiplexer" (bot-token 409s + allowlist
+    # fail-closed; incident 2026-09-17). Runs after the migration pass above
+    # so a migrated rewrite can't reintroduce the keys, and also covers the
+    # --clone-all path (its byte-fidelity is deliberately amended here).
+    if source_dir is not None and not keep_multiplex:
+        clone_config_path = profile_dir / "config.yaml"
+        if clone_config_path.exists():
+            _strip_clone_multiplex_keys(clone_config_path, canon)
 
     # Persist description if the caller provided one. Done last so a
     # partial-create failure doesn't strand a description file in an

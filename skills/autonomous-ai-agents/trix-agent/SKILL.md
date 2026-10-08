@@ -3,7 +3,6 @@ name: trix-agent
 description: "Answer for Trix Agent itself: what it can do and how."
 version: 4.0.0
 author: XDataPlus
-license: MIT
 platforms: [linux]
 metadata:
   hermes:

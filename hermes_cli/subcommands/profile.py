@@ -56,6 +56,15 @@ def build_profile_parser(subparsers, *, cmd_profile: Callable) -> None:
         help="Create an empty profile with no bundled skills (opts out of `hermes update` skill sync)",
     )
     profile_create.add_argument(
+        "--keep-multiplex",
+        action="store_true",
+        help="Keep gateway.multiplex_profiles / profile_routes / "
+             "multiplex_profile_allowlist when cloning (advanced). By default "
+             "they are stripped: a clone must not become a second "
+             "multiplexer that double-binds the default gateway's bot tokens "
+             "(RAF-191).",
+    )
+    profile_create.add_argument(
         "--description",
         default=None,
         help="One- or two-sentence description of what this profile is good at. "

@@ -4995,6 +4995,64 @@ def _guard_named_profile_under_multiplexer(force: bool = False) -> None:
     sys.exit(1)
 
 
+def _warn_multiplex_on_named_profile() -> None:
+    """WARN (not fail) when a named-profile gateway starts with multiplex on.
+
+    Multiplexing is only valid on the default gateway. A named profile with
+    ``gateway.multiplex_profiles: true`` is almost always a clone that
+    inherited the multiplexer keys (RAF-191, incident 2026-09-17): such a
+    gateway serves every profile from its own home and double-binds the
+    main bot token (409) while its empty per-profile secret scope
+    fail-closes the allowlist gate. Deliberately a warning — no hard fail —
+    so an operator who really meant it can still start the gateway.
+    """
+    try:
+        suffix = _profile_suffix()
+    except Exception:
+        return
+    if not suffix:
+        return  # default profile — multiplexing is legitimate here
+
+    try:
+        from gateway.config import _env_multiplex_profiles_override
+
+        multiplex = False
+        env_multiplex = _env_multiplex_profiles_override()
+        if env_multiplex is not None:
+            multiplex = env_multiplex
+        else:
+            from hermes_constants import get_hermes_home
+
+            cfg_path = get_hermes_home() / "config.yaml"
+            if cfg_path.exists():
+                # Raw read of THIS profile's config, mirroring the loader's
+                # gateway.*/top-level dual spelling.
+                from hermes_cli.config import read_user_config_raw
+
+                cfg = read_user_config_raw(cfg_path)
+                multiplex = bool(
+                    cfg.get("multiplex_profiles")
+                    or (cfg.get("gateway", {}) or {}).get("multiplex_profiles")
+                )
+    except Exception:
+        logger.debug("Multiplex-on-named-profile probe failed", exc_info=True)
+        return
+
+    if not multiplex:
+        return
+
+    message = (
+        f"Profile '{suffix}' has gateway.multiplex_profiles enabled — this "
+        f"looks like a clone of the default multiplexer profile. Multiplexing "
+        f"is only supported on the default gateway: this gateway would serve "
+        f"every profile from its own home (bot-token conflicts, allowlist "
+        f"fail-closed). Remove multiplex_profiles / profile_routes / "
+        f"multiplex_profile_allowlist from this profile's config.yaml."
+    )
+    logger.warning("%s", message)
+    print_error(f"WARNING: {message}")
+
+
 def _guard_supervised_gateway_conflict(force: bool = False) -> None:
     """Refuse a foreground gateway when a service manager already supervises one.
 
@@ -5108,6 +5166,7 @@ def run_gateway(verbose: int = 0, quiet: bool = False, replace: bool = False, fo
     """
     _guard_official_docker_root_gateway()
     _guard_named_profile_under_multiplexer(force=force)
+    _warn_multiplex_on_named_profile()
     _guard_supervised_gateway_conflict(force=force)
     _guard_existing_gateway_process_conflict(replace=replace)
     sys.path.insert(0, str(PROJECT_ROOT))

@@ -3,7 +3,6 @@ name: trix-system-admin
 description: "Роль профиля system_admin: границы, подтверждения, секреты."
 version: 0.1.0
 author: XDataPlus
-license: MIT
 platforms: [linux]
 metadata:
   hermes:

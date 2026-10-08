@@ -21,6 +21,7 @@ def mock_runner():
     # Bind the actual methods to the mock
     runner._profile_name_for_source = GatewayRunner._profile_name_for_source.__get__(runner)
     runner._resolve_profile_home_for_source = GatewayRunner._resolve_profile_home_for_source.__get__(runner)
+    runner._explicit_profile_outside_served_set = GatewayRunner._explicit_profile_outside_served_set.__get__(runner)
     return runner
 
 
@@ -364,6 +365,80 @@ class TestAdapterToSessionKeyIntegration:
         assert result is None
         assert source.profile is None
         assert source.profile_route_rejected is True
+
+
+class TestExplicitProfileServedGate:
+    """RAF-191: explicit ``source.profile`` stamps face the served-set gate too.
+
+    ``build_source`` validates ROUTED profiles against the multiplexer's
+    served set, but a source carrying an explicit stamp (``/p/<profile>/``
+    URL prefix, per-credential adapter ownership) skipped that half of the
+    check and could run a turn inside a profile the multiplexer is
+    configured NOT to serve.
+    """
+
+    def test_unserved_explicit_profile_flagged(self, mock_runner, telegram_source):
+        telegram_source.profile = "rogue"
+        with patch(
+            "hermes_cli.profiles.profiles_to_serve",
+            return_value=[("default", Path("/profiles/default"))],
+        ):
+            assert (
+                GatewayRunner._explicit_profile_outside_served_set(
+                    mock_runner, telegram_source
+                )
+                is True
+            )
+
+    def test_served_explicit_profile_passes(self, mock_runner, telegram_source):
+        telegram_source.profile = "coder"
+        with patch(
+            "hermes_cli.profiles.profiles_to_serve",
+            return_value=[
+                ("default", Path("/profiles/default")),
+                ("coder", Path("/profiles/coder")),
+            ],
+        ):
+            assert (
+                GatewayRunner._explicit_profile_outside_served_set(
+                    mock_runner, telegram_source
+                )
+                is False
+            )
+
+    def test_inert_when_multiplex_off(self, mock_runner, telegram_source):
+        mock_runner.config.multiplex_profiles = False
+        telegram_source.profile = "rogue"
+        assert (
+            GatewayRunner._explicit_profile_outside_served_set(
+                mock_runner, telegram_source
+            )
+            is False
+        )
+
+    @pytest.mark.asyncio
+    async def test_unserved_explicit_profile_dropped_at_ingress(
+        self, mock_runner, caplog
+    ):
+        """The shared ingress gate drops the message, mirroring rejected routes."""
+        mock_runner.config.multiplex_profiles = True
+        source = SessionSource(
+            platform=MagicMock(value="telegram"), chat_id="42"
+        )
+        source.profile = "rogue"
+
+        with patch(
+            "hermes_cli.profiles.profiles_to_serve",
+            return_value=[("default", Path("/profiles/default"))],
+        ), caplog.at_level(logging.WARNING, logger="gateway.run"):
+            result = await GatewayRunner._handle_message(
+                mock_runner,
+                MessageEvent(text="discard me", source=source),
+            )
+
+        assert result is None
+        assert source.profile_route_rejected is True
+        assert "not in the multiplexer's served set" in caplog.text
 
 
 class TestMultiplexGate:

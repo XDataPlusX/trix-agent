@@ -76,6 +76,25 @@ def _adapter() -> _ProfileAdapter:
     return adapter
 
 
+def _served_research():
+    """Declare 'research' as served for the runner-level ingress gate.
+
+    `_handle_message` validates explicit ``source.profile`` stamps against
+    the served set (`profiles_to_serve`). Without this patch the test reads
+    the runner's real on-disk profiles, so "research" is unserved on any
+    machine that does not happen to have it — and the message is dropped
+    before the busy-mode policy runs. Sibling coverage in
+    tests/gateway/test_profile_resolution.py patches the same seam.
+    """
+    return patch(
+        "hermes_cli.profiles.profiles_to_serve",
+        return_value=[
+            ("default", Path("/profiles/default")),
+            ("research", Path("/profiles/research")),
+        ],
+    )
+
+
 async def _load_profile_snapshot(
     runner: GatewayRunner,
     profile_home,
@@ -167,7 +186,8 @@ async def test_secondary_profile_busy_mode_controls_priority_path(
     agent.steer.return_value = True
     runner._running_agents[session_key] = agent
 
-    assert await runner._handle_message(event) is None
+    with _served_research():
+        assert await runner._handle_message(event) is None
 
     agent.interrupt.assert_not_called()
     if secondary_mode == "queue":
@@ -227,7 +247,8 @@ async def test_secondary_profile_busy_mode_controls_priority_restart_drain(
     agent._active_children = []
     runner._running_agents[session_key] = agent
 
-    response = await runner._handle_message(event)
+    with _served_research():
+        response = await runner._handle_message(event)
 
     assert isinstance(response, str)
     assert "queued" in response

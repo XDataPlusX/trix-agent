@@ -53,10 +53,24 @@ def test_buttons_are_russian():
     from plugins.platforms.telegram.adapter import _approval_button_labels
 
     labels = _approval_button_labels(lang="ru")
-    assert labels["once"] == "Разрешить"
-    assert labels["deny"] == "Отказать"
+    assert labels["once"] == "✅ Один раз"
+    assert labels["deny"] == "❌ Отказать"
     for value in labels.values():
         assert value.isascii() is False, f"кнопка осталась английской: {value!r}"
+
+
+def test_button_labels_fit_one_row():
+    """Подписи короткие, как в Hermes Agent: длинное «Разрешать в этом
+    разговоре» не влезало в кнопку и обрезалось, вариант «сессия» терялся.
+    Контракт — не конкретные слова, а то, что каждая подпись помещается
+    в ряд из трёх кнопок (с запасом на «✅ »)."""
+    from plugins.platforms.telegram.adapter import _approval_button_labels
+
+    labels = _approval_button_labels(lang="ru")
+    for key in ("once", "session", "always", "deny"):
+        assert len(labels[key]) <= 16, (
+            f"кнопка {key} снова длинная и обрежется: {labels[key]!r}"
+        )
 
 
 def test_timeout_note_warns_before_silence(adapter):

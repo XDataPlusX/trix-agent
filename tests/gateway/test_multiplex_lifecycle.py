@@ -1,4 +1,6 @@
 """Phase 4: lifecycle guard + per-profile observability."""
+import logging
+
 import pytest
 
 from gateway.config import GatewayConfig
@@ -118,5 +120,86 @@ class TestNamedProfileMultiplexerGuard:
         from hermes_cli import gateway as gw
 
         gw._guard_named_profile_under_multiplexer(force=False)
+
+
+class TestNamedProfileMultiplexWarning:
+    """RAF-191: a named profile starting with multiplex on gets a loud WARNING
+    (clone-detect), not a hard error."""
+
+    def _named_profile(self, monkeypatch, tmp_path):
+        from hermes_cli import gateway as gw
+
+        monkeypatch.setattr(gw, "_profile_suffix", lambda: "operations")
+        profile_home = tmp_path / "profiles" / "operations"
+        profile_home.mkdir(parents=True)
+        monkeypatch.setattr(
+            "hermes_constants.get_hermes_home", lambda: profile_home
+        )
+        monkeypatch.delenv("GATEWAY_MULTIPLEX_PROFILES", raising=False)
+        return gw, profile_home
+
+    def test_warns_for_named_profile_with_multiplex_on(
+        self, monkeypatch, tmp_path, caplog
+    ):
+        gw, home = self._named_profile(monkeypatch, tmp_path)
+        (home / "config.yaml").write_text(
+            "gateway:\n  multiplex_profiles: true\n", encoding="utf-8"
+        )
+
+        with caplog.at_level(logging.WARNING, logger="hermes_cli.gateway"):
+            gw._warn_multiplex_on_named_profile()
+
+        assert "clone of the default multiplexer" in caplog.text
+
+    def test_silent_for_default_profile(self, monkeypatch, tmp_path, caplog):
+        from hermes_cli import gateway as gw
+
+        monkeypatch.setattr(gw, "_profile_suffix", lambda: "")
+        home = tmp_path / ".hermes"
+        home.mkdir()
+        monkeypatch.setattr("hermes_constants.get_hermes_home", lambda: home)
+        monkeypatch.delenv("GATEWAY_MULTIPLEX_PROFILES", raising=False)
+        (home / "config.yaml").write_text(
+            "gateway:\n  multiplex_profiles: true\n", encoding="utf-8"
+        )
+
+        with caplog.at_level(logging.WARNING, logger="hermes_cli.gateway"):
+            gw._warn_multiplex_on_named_profile()
+
+        assert "multiplex" not in caplog.text
+
+    def test_silent_when_multiplex_off(self, monkeypatch, tmp_path, caplog):
+        gw, home = self._named_profile(monkeypatch, tmp_path)
+        (home / "config.yaml").write_text(
+            "gateway:\n  multiplex_profiles: false\n", encoding="utf-8"
+        )
+
+        with caplog.at_level(logging.WARNING, logger="hermes_cli.gateway"):
+            gw._warn_multiplex_on_named_profile()
+
+        assert "multiplexer" not in caplog.text
+
+    def test_env_override_on_warns_without_config(self, monkeypatch, tmp_path, caplog):
+        gw, home = self._named_profile(monkeypatch, tmp_path)
+        monkeypatch.setenv("GATEWAY_MULTIPLEX_PROFILES", "1")
+
+        with caplog.at_level(logging.WARNING, logger="hermes_cli.gateway"):
+            gw._warn_multiplex_on_named_profile()
+
+        assert "clone of the default multiplexer" in caplog.text
+
+    def test_env_override_off_silences_config_true(
+        self, monkeypatch, tmp_path, caplog
+    ):
+        gw, home = self._named_profile(monkeypatch, tmp_path)
+        (home / "config.yaml").write_text(
+            "gateway:\n  multiplex_profiles: true\n", encoding="utf-8"
+        )
+        monkeypatch.setenv("GATEWAY_MULTIPLEX_PROFILES", "0")
+
+        with caplog.at_level(logging.WARNING, logger="hermes_cli.gateway"):
+            gw._warn_multiplex_on_named_profile()
+
+        assert "multiplexer" not in caplog.text
 
 

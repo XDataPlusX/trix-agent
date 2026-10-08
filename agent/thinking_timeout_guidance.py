@@ -104,33 +104,23 @@ def is_thinking_timeout(classified: object, model: str, error_msg: str) -> bool:
 def build_thinking_timeout_guidance(
     provider: str, model: str, model_label: Optional[str] = None,
 ) -> str:
-    """Return the user-facing guidance string appended to ``_final_response``.
+    """Return client-safe guidance for a thinking timeout.
 
-    Args:
-        provider: provider slug (e.g. ``"nvidia"``, ``"openai"``).
-        model: bare model slug the user would put in their config
-            (e.g. ``"nemotron-3-ultra-550b-a55b"`` if the user uses
-            NVIDIA direct, or the full ``"nvidia/nemotron-3-ultra-550b-a55b"``
-            if they go through an aggregator).  Used verbatim in the
-            config snippet so the user can copy-paste.
-        model_label: optional short label for the model name in the
-            prose (e.g. ``"Nemotron 3 Ultra"``).  Falls back to the
-            slug if not provided.
+    ``provider``, ``model`` and ``model_label`` remain accepted for existing
+    call sites, but are deliberately not shown to the client: they are useful
+    for operators in logs and diagnostics, not in a chat reply.
     """
-    label = model_label or model
-    return (
-        "\n\nThe model's thinking phase exceeded the upstream proxy's "
-        "idle timeout before the first content token arrived. This is a "
-        f"known issue with reasoning models (like {label}) behind cloud "
-        "gateways (NVIDIA NIM, OpenAI, Anthropic, DeepSeek). Workarounds "
-        "in priority order:\n"
-        f"1. Set `providers.{provider}.models.{model}.stale_timeout_seconds: 900` "
-        "in `~/.hermes/config.yaml` to extend the per-call timeout. "
-        "(Hermes's built-in floor is 600s for known reasoning models — "
-        "if you still see this after raising, the upstream cap is even "
-        "shorter.)\n"
-        "2. Lower `reasoning_budget` or set `reasoning_effort: medium` on this "
-        "model if the provider supports it.\n"
-        "3. Use a smaller / faster reasoning model if the task doesn't "
-        "require deep thinking."
+    # This text is appended to a client reply. Keep both locales client-safe:
+    # configuration paths and provider internals belong in server logs/docs,
+    # not in a Telegram bubble.
+    from agent.i18n import t
+
+    return t(
+        "trix.agent.thinking_timeout_hint",
+        default=(
+            "\n\nThe model was thinking for so long that the provider dropped "
+            "the connection before the answer arrived. This can happen on heavy "
+            "requests. Try sending the request again; if it keeps happening, "
+            "tell whoever administers this machine."
+        ),
     )

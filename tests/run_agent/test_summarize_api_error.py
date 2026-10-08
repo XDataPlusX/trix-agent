@@ -56,10 +56,15 @@ def test_network_resolution_failure_explains_that_the_user_may_be_offline(
 
     summary = AIAgent._summarize_api_error(error)
 
+    # RAF-221: de-branded and reworded — this summary reaches clients
+    # verbatim, so it names no upstream product and speaks to a messaging
+    # client (who cannot "check their internet connection" — the network
+    # lives on the host machine).
     assert summary == (
-        "Hermes can't reach the model provider. You may be offline. "
-        "Check your internet connection and try again."
+        "Can't reach the model provider. This is a network problem on this "
+        "machine, not in your request — please try again later."
     )
+    assert "Hermes" not in summary
     assert "name resolution" not in summary.lower()
 
 
@@ -72,8 +77,9 @@ def test_wrapped_dns_resolution_failure_gets_the_same_friendly_message():
     except RuntimeError as error:
         summary = AIAgent._summarize_api_error(error)
 
-    assert "You may be offline" in summary
+    assert "Can't reach the model provider" in summary
     assert "Connection error" not in summary
+    assert "Hermes" not in summary
 
 
 def test_unread_streaming_response_does_not_crash_and_falls_back_to_exception_message():

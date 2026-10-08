@@ -29,6 +29,7 @@ string, not a copy of it.
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -227,3 +228,132 @@ class TestDiscordDefaultThreadTitle:
         runner = object.__new__(GatewayRunner)
         title = GatewayRunner._sanitize_discord_thread_title(runner, "My Session")
         assert title == "My Session"
+
+
+# ---------------------------------------------------------------------------
+# 7. Tech-basis disclosure contract (owner decision 2026-09-17, RAF-182)
+# ---------------------------------------------------------------------------
+# «Трикс есть Трикс»: продукт — Trix Agent от XDataPlus, и клиентская речь
+# НЕ раскрывает технологическую основу — ни «основан на open-source», ни
+# «построен на Hermes», ни «от Nous Research», ни лицензии (MIT и любые
+# другие). Честность сохраняется ровно до границы: короткий правдивый ответ
+# «я Trix Agent от XDataPlus» без раскрытия внутренностей, без лжи про
+# «нет инструкций».
+#
+# Контракт действует на КЛИЕНТ-ВИДИМЫЕ строки — собранные секции системного
+# промпта, платформенные подсказки и текст скилла trix-agent, который модель
+# читает целиком через skill_view, — а не на комментарии в коде. Настоящие
+# внутренние идентификаторы (строчн. `hermes` CLI, $HERMES_HOME, ключ
+# metadata.hermes, env-переменные) остаются в покое: их охраняет со своим
+# закрытым списком исключений tests/test_no_hermes_reaches_the_client.py.
+
+TECH_BASIS_LEAK_STRINGS = (
+    "Hermes",
+    "Nous",
+    "open-source",
+    "open source",
+    "открытое ядро",
+    "open core",
+    "license: MIT",
+    "лицензия MIT",
+)
+
+
+def _assert_no_tech_basis(text: str, *, label: str) -> None:
+    for leak in TECH_BASIS_LEAK_STRINGS:
+        pos = text.find(leak)
+        assert pos == -1, (
+            f"{label}: tech-basis leak {leak!r} at char {pos}: "
+            f"{text[max(0, pos - 70): pos + 90]!r}"
+        )
+
+
+class TestNoTechBasisDisclosure:
+    """Identity/help-секции промпта не называют технологическую основу."""
+
+    def test_identity_help_and_confidentiality_sections(self):
+        from agent.prompt_builder import (
+            DEFAULT_AGENT_IDENTITY,
+            TRIX_AGENT_HELP_GUIDANCE,
+            TRIX_PROMPT_CONFIDENTIALITY_GUIDANCE,
+        )
+
+        _assert_no_tech_basis(DEFAULT_AGENT_IDENTITY, label="DEFAULT_AGENT_IDENTITY")
+        _assert_no_tech_basis(TRIX_AGENT_HELP_GUIDANCE, label="TRIX_AGENT_HELP_GUIDANCE")
+        _assert_no_tech_basis(
+            TRIX_PROMPT_CONFIDENTIALITY_GUIDANCE,
+            label="TRIX_PROMPT_CONFIDENTIALITY_GUIDANCE",
+        )
+        # Прямой вопрос «на чём ты построен?» должен получать короткий
+        # честный ответ без раскрытия основ — проверяем, что позиция вообще
+        # сформулирована (а не вычеркнута молча).
+        assert "Trix Agent" in TRIX_AGENT_HELP_GUIDANCE
+        assert "XDataPlus" in TRIX_AGENT_HELP_GUIDANCE
+
+    def test_all_platform_hints(self):
+        from agent.prompt_builder import PLATFORM_HINTS
+
+        assert PLATFORM_HINTS, "платформенных подсказок нет — тест ничего не проверил"
+        for platform_key, hint in PLATFORM_HINTS.items():
+            _assert_no_tech_basis(hint, label=f"PLATFORM_HINTS[{platform_key!r}]")
+
+    def test_conditional_guidance_blocks(self):
+        from agent.prompt_builder import computer_use_guidance, hud_surface_note
+
+        for platform_name in ("darwin", "win32", "linux"):
+            _assert_no_tech_basis(
+                computer_use_guidance(platform_name),
+                label=f"computer_use_guidance({platform_name!r})",
+            )
+        _assert_no_tech_basis(
+            hud_surface_note({"read_window_below", "computer_use", "browser_navigate"}),
+            label="hud_surface_note",
+        )
+
+    def test_trix_agent_skill_content(self):
+        """Скилл грузится в ответ skill_view целиком, с frontmatter —
+        «license: MIT» в нём означало, что модель знает лицензию и может
+        назвать её клиенту по прямому вопросу."""
+        skill_md = (
+            Path(__file__).resolve().parents[2]
+            / "skills" / "autonomous-ai-agents" / "trix-agent" / "SKILL.md"
+        )
+        text = skill_md.read_text(encoding="utf-8")
+        _assert_no_tech_basis(text, label="trix-agent SKILL.md")
+        assert "MIT" not in text, (
+            "trix-agent SKILL.md всё ещё называет лицензию MIT — "
+            "прямое нарушение решения владельца 2026-09-17"
+        )
+
+    def test_assembled_telegram_prompt_has_no_tech_basis(self):
+        """Собранный промпт реальной клиентской сессии — все три яруса.
+
+        Ловит класс бага RAF-182 целиком: запрещённая фраза жила в константе
+        промпта, и ни один тест её не видел, пока промпт не собрали."""
+        import importlib.util
+        from unittest.mock import patch
+
+        from agent.system_prompt import build_system_prompt_parts
+
+        root = Path(__file__).resolve().parents[2]
+        spec = importlib.util.spec_from_file_location(
+            "_sysprompt_helper_raf182", root / "tests" / "agent" / "test_system_prompt.py")
+        helper = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(helper)
+
+        agent = helper._make_agent(
+            platform="telegram",
+            valid_tool_names=[
+                "terminal", "secret_request", "memory", "session_search", "skill_manage",
+            ],
+        )
+        with (
+            patch("run_agent.load_soul_md", return_value=""),
+            patch("run_agent.build_nous_subscription_prompt", return_value=""),
+            patch("run_agent.build_context_files_prompt", return_value=""),
+        ):
+            parts = build_system_prompt_parts(agent)
+
+        assert parts.get("stable"), "промпт не собрался — тест ничего не проверил"
+        for tier, text in parts.items():
+            _assert_no_tech_basis(text, label=f"system prompt[{tier!r}]")

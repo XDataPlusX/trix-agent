@@ -3,7 +3,6 @@ name: trix-file-contour
 description: "Общая база компании на одной машине: папки и права."
 version: 0.2.0
 author: XDataPlus
-license: MIT
 platforms: [linux]
 metadata:
   hermes:

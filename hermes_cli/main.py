@@ -9582,6 +9582,7 @@ def cmd_profile(args):
                 no_alias=no_alias,
                 no_skills=no_skills,
                 description=getattr(args, "description", None),
+                keep_multiplex=getattr(args, "keep_multiplex", False),
             )
             print(f"\nProfile '{name}' created at {profile_dir}")
 

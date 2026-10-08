@@ -59,12 +59,28 @@ SUPPRESSED_SAMPLES = [
 # Status lines that are meant to reach the customer.  A translation that
 # accidentally matched the filter would make these vanish instead.
 DELIVERED_SAMPLES = [
-    "⚠️ Rate limited — switching to fallback provider...",
-    "⚠️ Billing or credits exhausted — switching to fallback provider...",
+    # The fallback-attempt family: these six literals were hand-copied from
+    # a wording that no longer exists at any emit site. RAF-221 refreshed
+    # them from the live producers -- hermes_cli/trix_provider_errors.py's
+    # ``_DEFAULT_ATTEMPT_*`` / ``_DEFAULT_FALLBACK_*`` constants, which the
+    # conversation loop renders through t() on the attempt/switch paths.
+    "⚠️ The main key ran out of funds — switching to the fallback provider…",
+    "⚠️ The main provider rate-limited requests — switching to the fallback…",
+    "⚠️ The main provider is unreachable — switching to the fallback…",
+    "⚠️ The model returned an empty or malformed response — switching to the fallback provider…",
+    "🔄 Trying the fallback provider: m2 (p2). The main one was m1 (p1).",
     "❌ Billing or credits exhausted — no credit remaining",
     "✓ Context compaction complete — continuing turn...",
-    "⚠️ Provider unreachable — switching to fallback provider...",
-    "⚠️ Empty/malformed response — switching to fallback...",
+    # The retry-exhausted terminals (RAF-221: now catalog-rendered; the en
+    # defaults are these same literals, so both languages must stay
+    # delivered).
+    "❌ Rate limited after 3 retries — the turn did not finish. Please try again a little later.",
+    "❌ API failed after 3 retries — the turn did not finish. Please try again a little later.",
+    "⏱️ Provider overloaded. Waiting 300.0s (attempt 1/5)...",
+    "↻ Stream interrupted — using delivered content as final response",
+    "↻ Thinking-only response — prefilling to continue (1/2)",
+    "⚠️ Model produced reasoning but no visible response after all retries. Returning empty.",
+    "↻ Model signaled a tool call but sent none — re-prompting (1/3)",
     # The ten agent/conversation_loop.py status/final-response lines this
     # doc's task localized under trix.agent.* (English defaults -- see
     # test_conversation_loop_l10n.py for the executed en/ru pairs at each
@@ -97,6 +113,9 @@ DELIVERED_SAMPLES = [
     "⚠️ Модель ничего не ответила — повтор (1/3) через 5 с.",
     "❌ Модель не вернула ответ, несмотря на все повторы и попытки переключиться на резервного провайдера.",
     "❌ Модель не вернула ответ, несмотря на все повторы. Резервный провайдер не настроен.",
+    # Russian catalog strings are intentionally not copied here: the
+    # catalog-vs-filter guard below reads their live renders directly, so a
+    # wording change cannot leave a stale green snapshot behind.
     # The two agent/manual_compression_feedback.py direct /compress replies.
     "⏳ Compression already in progress for this session (holder: worker-1). Please wait for it to finish.",
     "⏳ Compression skipped: could not acquire this session's compression lock. Another compression may still be running, or the lock check failed — try again shortly.",

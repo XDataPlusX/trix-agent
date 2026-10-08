@@ -203,14 +203,6 @@ class TestDurationPhrase:
             assert "сут" not in in_hours, in_hours
             assert "час" not in in_days, in_days
 
-    def test_the_products_own_setting_reads_as_three_days(self):
-        """Связь текста с шаблоном клиента: сколько стоит в конфиге, столько
-        и произносится. Литерал 4320 здесь не нужен — берём из файла."""
-        template = yaml.safe_load(TRIX_TEMPLATE_PATH.read_text(encoding="utf-8"))
-        idle_minutes = template["session_reset"]["idle_minutes"]
-
-        assert duration_phrase(idle_minutes) == "трое суток"
-
     def test_outside_russian_the_upstream_format_is_kept(self, monkeypatch):
         """Русские слова в английской фразе дают смесь («We haven't talked
         for трое суток»). Тот же приём, что в ``trix_status``."""

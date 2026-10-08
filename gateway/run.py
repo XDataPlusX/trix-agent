@@ -7706,6 +7706,16 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
             )
             model = runtime_model
 
+        # Per-user default model (RAF-189): applies only when this session
+        # has no /model override — resolution priority is
+        # session-override > user-default > config default. Placed BEFORE
+        # channel_overrides so an administrator's explicit per-chat pin
+        # still outranks a user's personal preference for that chat.
+        if override is None and source is not None:
+            model, runtime_kwargs = self._apply_user_model_default(
+                source, model, runtime_kwargs
+            )
+
         cfg = getattr(self, "config", None)
         if cfg and source is not None:
             chat_id = str(source.chat_id) if source.chat_id else ""
@@ -16063,6 +16073,18 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                 source.profile = self._profile_name_for_source(source)
             except ProfileRouteRejected:
                 source.profile_route_rejected = True
+
+        # The other half of the fail-closed ingress gate (RAF-191): an
+        # EXPLICIT profile stamp (/p/<profile>/ URL prefix, per-credential
+        # adapter ownership) must also land inside the multiplexer's served
+        # set — the same rejection a matched route gets.
+        if (
+            getattr(getattr(self, "config", None), "multiplex_profiles", False)
+            and getattr(source, "profile", None)
+            and getattr(source, "profile_route_rejected", False) is not True
+            and self._explicit_profile_outside_served_set(source)
+        ):
+            source.profile_route_rejected = True
 
         # SessionSource owns a strict boolean marker. Require the literal value
         # so duck-typed test/internal sources with dynamic attributes are not
@@ -25189,6 +25211,95 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
         override = _ims_state.conversation.model_override if _ims_state else None
         return override is not None and override.get("model") == agent_model
 
+    def _user_default_applies_to_source(self, source) -> bool:
+        """Whether the sender's per-user default model may drive *source*.
+
+        DMs only (RAF-189). A personal default is exactly that — personal:
+        it must steer the user's own DM conversations (including every
+        Telegram DM topic, each of which is its own session). A shared
+        group/thread session is *not* the sender's alone, so applying a
+        per-user default there would flip the group's model whenever the
+        agent is rebuilt by a different sender; groups keep the existing
+        session-override/config behavior.
+        """
+        if source is None:
+            return False
+        if str(getattr(source, "chat_type", "") or "") != "dm":
+            return False
+        from gateway.user_model_defaults import user_model_default_key
+
+        return bool(user_model_default_key(source))
+
+    def _load_user_model_default(self, source) -> Optional[Dict[str, Any]]:
+        """Read the sender's persisted default model, if any.
+
+        Reads the per-profile store (``<active home>/state/
+        user_model_defaults.json`` — under multiplex the turn already runs
+        inside ``_profile_runtime_scope``, so ``get_hermes_home()`` is the
+        routed profile's home and defaults never leak across profiles).
+        Returns ``None`` for non-DM sources, unkeyable identities, or a
+        missing/corrupt store; failures degrade to "no default" rather
+        than breaking model resolution.
+        """
+        if not self._user_default_applies_to_source(source):
+            return None
+        try:
+            from gateway.user_model_defaults import (
+                get_user_model_default,
+                user_model_default_key,
+            )
+
+            return get_user_model_default(user_model_default_key(source))
+        except Exception:
+            logger.debug(
+                "Failed to read per-user default model for source=%s",
+                getattr(source, "user_id", ""),
+                exc_info=True,
+            )
+            return None
+
+    def _apply_user_model_default(
+        self, source, model: str, runtime_kwargs: dict
+    ) -> tuple:
+        """Apply the sender's per-user default model (RAF-189).
+
+        Called from ``_resolve_session_agent_runtime`` only when the
+        session has NO ``/model`` override — priority is
+        session-override > user-default > config default. Credentials are
+        re-resolved from the auth store at use time (only non-secret
+        model/provider/base_url are persisted); on credential-resolution
+        failure the env/config-resolved runtime is kept with the stored
+        provider applied on top, mirroring how session-override
+        rehydration degrades.
+        """
+        default = self._load_user_model_default(source)
+        if not default:
+            return model, runtime_kwargs
+        model = default.get("model") or model
+        runtime_kwargs = dict(runtime_kwargs)
+        provider = default.get("provider") or ""
+        if provider:
+            try:
+                runtime_kwargs.update(
+                    _resolve_runtime_agent_kwargs_for_provider(provider)
+                )
+                runtime_kwargs.pop("model", None)
+            except Exception:
+                logger.warning(
+                    "Credential re-resolution failed for per-user default "
+                    "(provider=%s); keeping env-resolved runtime",
+                    provider,
+                    exc_info=True,
+                )
+                runtime_kwargs["provider"] = provider
+        if default.get("base_url"):
+            runtime_kwargs["base_url"] = default["base_url"]
+        logger.info(
+            "Applied per-user default model: user=%s model=%s provider=%s",
+            getattr(source, "user_id", ""), model, provider or "",
+        )
+        return model, runtime_kwargs
+
     def _release_running_agent_state(
         self,
         session_key: str,
@@ -26801,6 +26912,47 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
             getattr(source, "thread_id", None), getattr(source, "parent_chat_id", None),
         )
         return None
+
+    def _explicit_profile_outside_served_set(self, source: SessionSource) -> bool:
+        """Return True when an explicit ``source.profile`` stamp is unserved.
+
+        The routed half of the ingress gate (``_profile_name_for_source``)
+        already rejects matched routes whose target profile is outside the
+        multiplexer's served set; this covers the other half — sources
+        stamped directly (``/p/<profile>/`` URL prefix, per-credential
+        adapter ownership). In a healthy multiplexer every explicit stamp
+        belongs to a served profile (adapters start only for served homes),
+        so a miss means config drift and the turn must fail closed instead
+        of running inside a profile the multiplexer is configured NOT to
+        serve (RAF-191). Fail-closed on resolution errors too, mirroring
+        the routed half.
+        """
+        config = getattr(self, "config", None)
+        if not getattr(config, "multiplex_profiles", False):
+            return False
+        name = (getattr(source, "profile", None) or "").strip()
+        if not name:
+            return False
+        try:
+            served = {served for served, _home in _multiplex_profile_homes(config)}
+        except Exception:
+            logger.warning(
+                "Rejecting explicit profile %r because the served-profile set "
+                "could not be resolved",
+                name,
+                exc_info=True,
+            )
+            return True
+        if name not in served:
+            logger.warning(
+                "Rejecting explicit profile %r for %s/%s: profile is not in "
+                "the multiplexer's served set",
+                name,
+                getattr(getattr(source, "platform", None), "value", None),
+                getattr(source, "chat_id", None),
+            )
+            return True
+        return False
 
     def _resolve_profile_home_for_source(self, source: SessionSource) -> "Path":
         """Resolve which profile's HERMES_HOME should serve this inbound source.

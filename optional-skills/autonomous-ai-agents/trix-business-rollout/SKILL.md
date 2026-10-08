@@ -3,7 +3,6 @@ name: trix-business-rollout
 description: "Разворачивает бизнес-режим на клиентской машине по SSH."
 version: 0.1.0
 author: XDataPlus
-license: MIT
 platforms: [linux]
 metadata:
   hermes:

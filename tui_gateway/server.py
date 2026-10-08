@@ -4515,6 +4515,11 @@ def _apply_model_switch(
     # using the canonical error copy.
     if is_global_flag and one_turn:
         raise ValueError(MODEL_SWITCH_ERROR_TEXT[MODEL_SWITCH_ERR_ONCE_WITH_GLOBAL])
+    # Per-user defaults (RAF-189) are gateway state keyed by the messaging
+    # platform identity; the TUI has no such identity, so reject the flag
+    # instead of silently treating it as a plain switch.
+    if getattr(parsed_flags, "is_default", False):
+        raise ValueError("/model --default is not available here")
     persist_global = (
         persist_override
         if persist_override is not None

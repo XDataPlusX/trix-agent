@@ -229,6 +229,32 @@ def client_provider_not_configured_message() -> str:
     )
 
 
+def provider_overloaded_wait_status(
+    *, seconds: str, attempt: int, max_retries: int
+) -> str:
+    """Строка «провайдер перегружен — жду и пробую снова» для клиента.
+
+    RAF-221: до этой правки строка собиралась инлайном в
+    ``agent/conversation_loop.py`` на английском — «⏱️ Provider overloaded.
+    Waiting 300.0s ... (Z.AI Coding overload adaptive long backoff)...» — и
+    доходила до клиента как есть, вместе с внутренним именем политики
+    отката. Английский литерал и policy-хвост остаются в подавляемой
+    «Rate limited. Waiting ...» строке (шлюзовой фильтр глушит её по
+    английскому тексту — Ruling 8), а эта, доставляемая, ветка рендерится
+    из каталога.
+    """
+    return t(
+        "trix.agent.provider_overloaded_waiting",
+        seconds=seconds,
+        attempt=attempt,
+        max_retries=max_retries,
+        default=(
+            f"⏱️ Provider overloaded. Waiting {seconds}s "
+            f"(attempt {attempt}/{max_retries})..."
+        ),
+    )
+
+
 def _reason_name(reason: Any) -> str:
     """Имя причины, устойчивое к тому, что придёт enum, строка или None."""
     if reason is None:

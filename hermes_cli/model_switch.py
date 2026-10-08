@@ -488,6 +488,7 @@ class ModelFlagParseResult:
     force_refresh: bool = False
     is_session: bool = False
     is_once: bool = False
+    is_default: bool = False
 # ---------------------------------------------------------------------------
 # Flag parsing
 # ---------------------------------------------------------------------------
@@ -510,6 +511,7 @@ def parse_model_flags_detailed(raw_args: str) -> ModelFlagParseResult:
         "sonnet --global"                -> ("sonnet", "", True, False, False)
         "sonnet --session"               -> ("sonnet", "", False, False, True)
         "sonnet --once"                  -> is_once=True
+        "sonnet --default"               -> is_default=True
         "sonnet --provider anthropic"    -> ("sonnet", "anthropic", False, False, False)
         "--provider my-ollama"           -> ("", "my-ollama", False, False, False)
         "--refresh"                      -> ("", "", False, True, False)
@@ -520,11 +522,12 @@ def parse_model_flags_detailed(raw_args: str) -> ModelFlagParseResult:
     force_refresh = False
     is_session = False
     is_once = False
+    is_default = False
 
     # Normalize Unicode dashes (Telegram/iOS auto-converts -- to em/en dash)
     # A single Unicode dash before a flag keyword becomes "--"
     import re as _re
-    raw_args = _re.sub(r'[\u2012\u2013\u2014\u2015](provider|global|session|refresh|once)', r'--\1', raw_args)
+    raw_args = _re.sub(r'[\u2012\u2013\u2014\u2015](provider|global|session|refresh|once|default)', r'--\1', raw_args)
 
     # Keep this hand-rolled because model IDs may contain colons/slashes and
     # the historical parser did not require shell quoting.
@@ -544,6 +547,9 @@ def parse_model_flags_detailed(raw_args: str) -> ModelFlagParseResult:
         elif parts[i] == "--once":
             is_once = True
             i += 1
+        elif parts[i] == "--default":
+            is_default = True
+            i += 1
         elif parts[i] == "--provider" and i + 1 < len(parts):
             explicit_provider = parts[i + 1]
             i += 2
@@ -559,6 +565,7 @@ def parse_model_flags_detailed(raw_args: str) -> ModelFlagParseResult:
         force_refresh=force_refresh,
         is_session=is_session,
         is_once=is_once,
+        is_default=is_default,
     )
 
 
@@ -583,6 +590,7 @@ def resolve_persist_behavior(
     is_session: bool,
     is_once: bool = False,
     explicit_provider: str = "",
+    is_default: bool = False,
 ) -> bool:
     """Decide whether a ``/model`` switch should persist to ``config.yaml``.
 
@@ -590,12 +598,15 @@ def resolve_persist_behavior(
 
     1. ``--once`` explicitly opts out → ``False`` (next turn only).
     2. ``--session`` explicitly opts out → ``False`` (this session only).
-    3. ``--global`` explicitly opts in → ``True``.
-    4. ``--provider`` given without an explicit persist flag → ``False``
+    3. ``--default`` (per-user default) explicitly opts out → ``False`` —
+       the user's default lives in gateway state, never in the shared
+       server config.yaml.
+    4. ``--global`` explicitly opts in → ``True``.
+    5. ``--provider`` given without an explicit persist flag → ``False``
        (session only).  Provider switches are typically exploratory — the
        user is trying a different backend for this conversation, not
        reconfiguring the default.  ``--global`` can still force persist.
-    5. Otherwise defer to ``model.persist_switch_by_default`` in
+    6. Otherwise defer to ``model.persist_switch_by_default`` in
        ``config.yaml`` (defaults to ``False``: a plain ``/model <name>``
        affects only the current session).  Users who want the old
        persist-by-default behavior can set the key to ``true``; a one-off
@@ -608,6 +619,8 @@ def resolve_persist_behavior(
     if is_once:
         return False
     if is_session:
+        return False
+    if is_default:
         return False
     if is_global:
         return True
@@ -640,6 +653,10 @@ def resolve_persist_behavior(
 # Error codes emitted by parse_model_switch_args().
 MODEL_SWITCH_ERR_ONCE_WITH_GLOBAL = "once_with_global"
 MODEL_SWITCH_ERR_ONCE_REQUIRES_TARGET = "once_requires_target"
+MODEL_SWITCH_ERR_DEFAULT_WITH_GLOBAL = "default_with_global"
+MODEL_SWITCH_ERR_DEFAULT_WITH_SESSION = "default_with_session"
+MODEL_SWITCH_ERR_DEFAULT_WITH_ONCE = "default_with_once"
+MODEL_SWITCH_ERR_DEFAULT_REQUIRES_TARGET = "default_requires_target"
 
 # Canonical (surface-neutral) error copy.  Surfaces prepend their own
 # decoration ("  ✗ " in the CLI, "❌ " in the gateway) but MUST NOT change
@@ -647,6 +664,12 @@ MODEL_SWITCH_ERR_ONCE_REQUIRES_TARGET = "once_requires_target"
 MODEL_SWITCH_ERROR_TEXT = {
     MODEL_SWITCH_ERR_ONCE_WITH_GLOBAL: "/model --once cannot be combined with --global",
     MODEL_SWITCH_ERR_ONCE_REQUIRES_TARGET: "/model --once requires a model or provider.",
+    MODEL_SWITCH_ERR_DEFAULT_WITH_GLOBAL: "/model --default cannot be combined with --global",
+    MODEL_SWITCH_ERR_DEFAULT_WITH_SESSION: "/model --default cannot be combined with --session",
+    MODEL_SWITCH_ERR_DEFAULT_WITH_ONCE: "/model --default cannot be combined with --once",
+    MODEL_SWITCH_ERR_DEFAULT_REQUIRES_TARGET: (
+        "/model --default requires a model (or `off` to reset your default)."
+    ),
 }
 
 
@@ -655,9 +678,9 @@ class ModelSwitchRequest:
     """A fully parsed /model command request.
 
     ``scope`` is the *requested* persistence scope derived purely from the
-    flags: ``"once"`` | ``"session"`` | ``"global"`` | ``"default"`` (no
-    explicit scope flag; the effective decision then belongs to
-    :func:`resolve_persist_behavior`, which also reads config).
+    flags: ``"once"`` | ``"session"`` | ``"global"`` | ``"user_default"`` |
+    ``"default"`` (no explicit scope flag; the effective decision then
+    belongs to :func:`resolve_persist_behavior`, which also reads config).
 
     ``errors`` carries error *codes* (see ``MODEL_SWITCH_ERR_*``); surfaces
     render them via :data:`MODEL_SWITCH_ERROR_TEXT` plus their own prefix.
@@ -669,6 +692,7 @@ class ModelSwitchRequest:
     is_global: bool = False
     is_session: bool = False
     is_once: bool = False
+    is_default: bool = False
     force_refresh: bool = False
     scope: str = "default"
     errors: tuple = ()
@@ -688,6 +712,7 @@ class ModelSwitchRequest:
             force_refresh=self.force_refresh,
             is_session=self.is_session,
             is_once=self.is_once,
+            is_default=self.is_default,
         )
 
     def error_messages(self) -> list:
@@ -707,6 +732,11 @@ def parse_model_switch_args(raw: str) -> ModelSwitchRequest:
     * ``--once`` + ``--global``  → ``MODEL_SWITCH_ERR_ONCE_WITH_GLOBAL``
     * ``--once`` with no model and no ``--provider``
       → ``MODEL_SWITCH_ERR_ONCE_REQUIRES_TARGET``
+    * ``--default`` + ``--global`` → ``MODEL_SWITCH_ERR_DEFAULT_WITH_GLOBAL``
+    * ``--default`` + ``--session`` → ``MODEL_SWITCH_ERR_DEFAULT_WITH_SESSION``
+    * ``--default`` + ``--once`` → ``MODEL_SWITCH_ERR_DEFAULT_WITH_ONCE``
+    * ``--default`` with no model and no ``--provider``
+      → ``MODEL_SWITCH_ERR_DEFAULT_REQUIRES_TARGET``
 
     Model targets pass through untouched: bare names (``sonnet``),
     aggregator slugs (``vendor/model``), and colon forms (``vendor:model``)
@@ -721,11 +751,21 @@ def parse_model_switch_args(raw: str) -> ModelSwitchRequest:
         errors.append(MODEL_SWITCH_ERR_ONCE_WITH_GLOBAL)
     if parsed.is_once and not parsed.model_input and not parsed.explicit_provider:
         errors.append(MODEL_SWITCH_ERR_ONCE_REQUIRES_TARGET)
+    if parsed.is_default and parsed.is_global:
+        errors.append(MODEL_SWITCH_ERR_DEFAULT_WITH_GLOBAL)
+    if parsed.is_default and parsed.is_session:
+        errors.append(MODEL_SWITCH_ERR_DEFAULT_WITH_SESSION)
+    if parsed.is_default and parsed.is_once:
+        errors.append(MODEL_SWITCH_ERR_DEFAULT_WITH_ONCE)
+    if parsed.is_default and not parsed.model_input and not parsed.explicit_provider:
+        errors.append(MODEL_SWITCH_ERR_DEFAULT_REQUIRES_TARGET)
 
     if parsed.is_once:
         scope = "once"
     elif parsed.is_session:
         scope = "session"
+    elif parsed.is_default:
+        scope = "user_default"
     elif parsed.is_global:
         scope = "global"
     else:
@@ -738,6 +778,7 @@ def parse_model_switch_args(raw: str) -> ModelSwitchRequest:
         is_global=parsed.is_global,
         is_session=parsed.is_session,
         is_once=parsed.is_once,
+        is_default=parsed.is_default,
         force_refresh=parsed.force_refresh,
         scope=scope,
         errors=tuple(errors),

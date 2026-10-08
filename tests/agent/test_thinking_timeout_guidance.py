@@ -30,6 +30,8 @@ from types import SimpleNamespace
 
 import pytest
 
+from agent import i18n
+
 
 # ── helpers ──────────────────────────────────────────────────────────────
 
@@ -163,22 +165,28 @@ class TestIsThinkingTimeout:
 
 
 class TestBuildThinkingTimeoutGuidance:
-    def test_guidance_mentions_config_path(self):
+    @pytest.mark.parametrize("provider,model", [
+        ("nvidia", "nvidia/nemotron-3-ultra-550b-a55b"),
+        ("openai", "gpt-5.6"),
+    ])
+    def test_guidance_is_client_safe_for_every_locale(self, monkeypatch, provider, model):
         from agent.thinking_timeout_guidance import build_thinking_timeout_guidance
-        text = build_thinking_timeout_guidance(
-            provider="nvidia", model="nvidia/nemotron-3-ultra-550b-a55b",
-        )
-        assert "providers.nvidia.models.nvidia/nemotron-3-ultra-550b-a55b.stale_timeout_seconds" in text
 
-
-    def test_guidance_mentions_known_providers(self):
-        from agent.thinking_timeout_guidance import build_thinking_timeout_guidance
-        text = build_thinking_timeout_guidance(provider="nvidia", model="x")
-        # At least one of the known cloud providers should be mentioned
-        # to give the user context.
-        assert any(p in text for p in (
-            "NVIDIA NIM", "OpenAI", "Anthropic", "DeepSeek",
-        ))
+        for lang in ("en", "ru"):
+            monkeypatch.setenv("HERMES_LANGUAGE", lang)
+            i18n.reset_language_cache()
+            text = build_thinking_timeout_guidance(provider=provider, model=model)
+            assert "config.yaml" not in text
+            assert "stale_timeout_seconds" not in text
+            assert "NVIDIA NIM" not in text
+            assert "OpenAI" not in text
+            assert "Anthropic" not in text
+            assert "DeepSeek" not in text
+            if lang == "ru":
+                assert "Попробуйте" in text
+            else:
+                assert "Try" in text
+        i18n.reset_language_cache()
 
 
 

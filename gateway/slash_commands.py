@@ -1785,8 +1785,9 @@ class GatewaySlashCommandsMixin:
                 self, "_resolve_profile_home_for_source"
             )(source)
 
-        # Parse --provider, --global, --session, --once, and --refresh flags
-        # via the shared single-owner parser (hermes_cli.model_switch).
+        # Parse --provider, --global, --session, --once, --default, and
+        # --refresh flags via the shared single-owner parser
+        # (hermes_cli.model_switch).
         request = parse_model_switch_args(raw_args)
         model_input = request.target
         explicit_provider = request.explicit_provider
@@ -1794,6 +1795,7 @@ class GatewaySlashCommandsMixin:
         force_refresh = request.force_refresh
         is_session = request.is_session
         one_turn = request.is_once
+        is_user_default = request.is_default
         if request.errors:
             # Gateway decoration: "❌ " prefix over the canonical error copy.
             return f"❌ {request.error_messages()[0]}"
@@ -1802,6 +1804,7 @@ class GatewaySlashCommandsMixin:
             is_session,
             is_once=one_turn,
             explicit_provider=explicit_provider,
+            is_default=is_user_default,
         )
 
         # --refresh: bust the disk cache so the picker shows live data.
@@ -1852,14 +1855,75 @@ class GatewaySlashCommandsMixin:
         restore_snapshot = (
             self._snapshot_session_model_override(session_key) if one_turn else None
         )
+        # Server (config.yaml) default, captured before any session override
+        # replaces current_model below — needed for the three-level display
+        # (session / personal default / server default) of bare /model.
+        server_default_model = current_model
         if override:
             current_model = override.get("model", current_model)
             current_provider = override.get("provider", current_provider)
             current_base_url = override.get("base_url", current_base_url)
             current_api_key = override.get("api_key", current_api_key)
 
+        # Per-user default model (RAF-189). The store is per-profile: under
+        # multiplex the whole /model dispatch already runs inside
+        # _profile_runtime_scope, so get_hermes_home() (used by the store)
+        # is the routed profile's home.
+        from gateway.user_model_defaults import (
+            clear_user_model_default,
+            get_user_model_default,
+            set_user_model_default,
+            user_model_default_key,
+        )
+        from hermes_cli.model_switch import format_model_for_display as _fmt_display
+
+        user_key = user_model_default_key(source)
+        user_default_entry = get_user_model_default(user_key) if user_key else None
+        user_default_model = (
+            user_default_entry.get("model", "") if user_default_entry else ""
+        )
+
+        # /model --default off — drop the personal default, fall back to the
+        # server default for future sessions. No session/config mutation.
+        if (
+            is_user_default
+            and not explicit_provider
+            and model_input.strip().lower() in {"off", "none", "reset"}
+        ):
+            if not user_key:
+                return t("gateway.model.user_default_no_user")
+            if not user_default_entry:
+                return t(
+                    "gateway.model.user_default_none",
+                    model=_fmt_display(server_default_model) or "unknown",
+                )
+            if not clear_user_model_default(user_key):
+                return t("gateway.model.user_default_store_failed")
+            # Sessions without an explicit /model override re-resolve on
+            # their next agent build; evict this one so the change is
+            # visible immediately instead of after the next cache miss.
+            self._evict_cached_agent(session_key)
+            return t(
+                "gateway.model.user_default_cleared",
+                model=_fmt_display(server_default_model) or "unknown",
+            )
+
         # No args: show interactive picker (Telegram/Discord) or text list
         if not model_input and not explicit_provider:
+            # Three-level status block (RAF-189): what this session runs,
+            # the user's personal default, and the server default.
+            levels_text = "\n".join(
+                (
+                    t("gateway.model.levels_session", model=_fmt_display(current_model) or "unknown"),
+                    t(
+                        "gateway.model.levels_user_default",
+                        model=_fmt_display(user_default_model)
+                        or t("gateway.model.user_default_unset"),
+                    ),
+                    t("gateway.model.levels_server_default", model=_fmt_display(server_default_model) or "unknown"),
+                )
+            )
+
             # Try interactive picker if the platform supports it
             adapter = getattr(self, "_adapter_for_source")(source)
             has_picker = (
@@ -2162,6 +2226,109 @@ class GatewaySlashCommandsMixin:
                                 _chat_id, model_id, provider_slug
                             )
 
+                    # RAF-189: picker affordances for the personal default.
+                    # Offered only when the source identities a user and
+                    # (for reset) a default is actually set.
+                    _picker_can_default = bool(user_key)
+                    _picker_has_default = bool(user_default_entry)
+
+                    async def _on_set_default_scoped(
+                        _chat_id: str, model_id: str, provider_slug: str
+                    ) -> str:
+                        """Store the picked model as the user's default."""
+                        if not user_key:
+                            return t("gateway.model.user_default_no_user")
+                        # Re-resolve via switch_model so the stored default
+                        # carries the canonical model id + provider (picker
+                        # model_id is already resolved, but this also
+                        # validates it against the live catalog). Offload:
+                        # see _on_model_selected_scoped (#20525, #41289).
+                        result = await asyncio.to_thread(
+                            _switch_model,
+                            raw_input=model_id,
+                            current_provider=_cur_provider,
+                            current_model=_cur_model,
+                            current_base_url=_cur_base_url,
+                            current_api_key=_cur_api_key,
+                            is_global=False,
+                            explicit_provider=provider_slug,
+                            user_providers=user_provs,
+                            custom_providers=custom_provs,
+                        )
+                        if not result.success:
+                            return t(
+                                "gateway.model.error_prefix",
+                                error=result.error_message,
+                            )
+                        if not set_user_model_default(
+                            user_key,
+                            {
+                                "model": result.new_model,
+                                "provider": result.target_provider,
+                                "base_url": result.base_url,
+                            },
+                        ):
+                            return t("gateway.model.user_default_store_failed")
+                        return t(
+                            "gateway.model.saved_user_default",
+                            model=_fmt_display(result.new_model),
+                        )
+
+                    async def _on_set_default(
+                        _chat_id: str, model_id: str, provider_slug: str
+                    ) -> str:
+                        if _picker_profile_home is None:
+                            return await _on_set_default_scoped(
+                                _chat_id, model_id, provider_slug
+                            )
+                        from gateway.run import _profile_runtime_scope
+
+                        with _profile_runtime_scope(_picker_profile_home):
+                            return await _on_set_default_scoped(
+                                _chat_id, model_id, provider_slug
+                            )
+
+                    async def _on_reset_default_scoped(_chat_id: str) -> str:
+                        """Drop the user's default (back to server default)."""
+                        if not user_key:
+                            return t("gateway.model.user_default_no_user")
+                        clear_user_model_default(user_key)
+                        return t(
+                            "gateway.model.user_default_cleared",
+                            model=_fmt_display(server_default_model) or "unknown",
+                        )
+
+                    async def _on_reset_default(_chat_id: str) -> str:
+                        if _picker_profile_home is None:
+                            return await _on_reset_default_scoped(_chat_id)
+                        from gateway.run import _profile_runtime_scope
+
+                        with _profile_runtime_scope(_picker_profile_home):
+                            return await _on_reset_default_scoped(_chat_id)
+
+                    # Only adapters whose send_model_picker understands the
+                    # RAF-189 affordances get them; older signatures
+                    # (Discord/Matrix pickers) keep the legacy call.
+                    _picker_kwargs = {}
+                    try:
+                        import inspect as _inspect
+
+                        _picker_params = _inspect.signature(
+                            adapter.send_model_picker
+                        ).parameters
+                        if "levels_text" in _picker_params:
+                            _picker_kwargs["levels_text"] = levels_text
+                        if "on_set_default" in _picker_params and _picker_can_default:
+                            _picker_kwargs["on_set_default"] = _on_set_default
+                        if (
+                            "on_reset_default" in _picker_params
+                            and _picker_can_default
+                            and _picker_has_default
+                        ):
+                            _picker_kwargs["on_reset_default"] = _on_reset_default
+                    except (TypeError, ValueError):
+                        _picker_kwargs = {}
+
                     metadata = self._thread_metadata_for_source(source, self._reply_anchor_for_event(event))
                     result = await adapter.send_model_picker(
                         chat_id=source.chat_id,
@@ -2171,13 +2338,18 @@ class GatewaySlashCommandsMixin:
                         session_key=session_key,
                         on_model_selected=_on_model_selected,
                         metadata=metadata,
+                        **_picker_kwargs,
                     )
                     if result.success:
                         return None  # Picker sent — adapter handles the response
 
             # Fallback: text list (for platforms without picker or if picker failed)
             provider_label = get_label(current_provider)
-            lines = [t("gateway.model.current_label", model=current_model or "unknown", provider=provider_label), ""]
+            lines = [
+                t("gateway.model.current_label", model=current_model or "unknown", provider=provider_label),
+                levels_text,
+                "",
+            ]
 
             try:
                 # Offload blocking provider-listing off the event loop so the
@@ -2208,9 +2380,15 @@ class GatewaySlashCommandsMixin:
             lines.append(t("gateway.model.usage_switch_model"))
             lines.append(t("gateway.model.usage_switch_provider"))
             lines.append(t("gateway.model.usage_persist"))
+            if user_key:
+                lines.append(t("gateway.model.usage_user_default"))
             return "\n".join(lines)
 
         # Perform the switch
+        if is_user_default and not user_key:
+            # Guard BEFORE any state changes: without a platform identity
+            # there is nothing to key the personal default to.
+            return t("gateway.model.user_default_no_user")
         skew_error = _model_switch_skew_guard()
         if skew_error:
             return skew_error
@@ -2364,6 +2542,26 @@ class GatewaySlashCommandsMixin:
                         "Failed to persist session model override", exc_info=True
                     )
 
+            # RAF-189: /model <name> --default — also persist the switched
+            # model as this user's personal default (per-profile store;
+            # survives restarts and new sessions/topics). The session
+            # override above makes the CURRENT conversation use it now;
+            # the user default makes every FRESH session start from it.
+            # (user_key was validated before the switch started.)
+            if is_user_default:
+                if not set_user_model_default(
+                    user_key,
+                    {
+                        "model": result.new_model,
+                        "provider": result.target_provider,
+                        "base_url": result.base_url,
+                    },
+                ):
+                    logger.warning(
+                        "Failed to persist per-user default model for %s",
+                        user_key,
+                    )
+
             # Evict cached agent so the next turn creates a fresh agent from the
             # override rather than relying on cache signature mismatch detection.
             self._evict_cached_agent(session_key)
@@ -2482,6 +2680,10 @@ class GatewaySlashCommandsMixin:
 
             if persist_global:
                 lines.append(t("gateway.model.saved_global"))
+            elif is_user_default:
+                lines.append(
+                    t("gateway.model.saved_user_default", model=_fmt_display(result.new_model))
+                )
             elif one_turn:
                 lines.append(t("trix.cmd.model.once_note"))
             else:

@@ -1666,6 +1666,30 @@ def test_an_answered_timezone_is_never_overwritten(client_config):
     assert data["timezone"] == "Asia/Yekaterinburg"
 
 
+def test_an_existing_manual_approvals_mode_is_never_overwritten(client_config):
+    """Установленная машина с mode: manual сохраняет его при любом досеве.
+
+    Дефолт шаблона сменён на off (RAF-181) — но только для свежих установок
+    и новых профилей. Досев доставляет отсутствующие ключи, а не новые
+    значения существующих: смена поведения работающих клиентов обновлением
+    запрещена.
+    """
+    from hermes_cli.trix_config_sync import sync_missing_client_sections
+
+    client_config.write_text(
+        client_config.read_text(encoding="utf-8") + "\napprovals:\n  mode: manual\n",
+        encoding="utf-8",
+    )
+    before = client_config.read_text(encoding="utf-8")
+
+    added, skipped = sync_missing_client_sections(client_config, TEMPLATE)
+
+    assert "approvals.mode" not in added
+    after = client_config.read_text(encoding="utf-8")
+    assert yaml.safe_load(after)["approvals"]["mode"] == "manual"
+    assert _old_lines_are_untouched(before, after)
+
+
 def test_telegram_network_section_is_seeded_when_missing(client_config):
     """Клиент без блока telegram: получает всю секцию с комментариями.
 

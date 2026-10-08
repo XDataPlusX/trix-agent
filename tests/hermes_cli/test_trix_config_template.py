@@ -342,7 +342,7 @@ _OUR_DEVIATIONS = {
     ("tts", "edge", "voice"): "ru-RU-SvetlanaNeural",
     ("display", "platforms", "telegram", "streaming"): False,
     ("display", "interim_assistant_messages"): False,
-    ("approvals", "mode"): "manual",
+    ("approvals", "mode"): "off",
     ("tool_loop_guardrails", "hard_stop_enabled"): True,
     ("agent", "agent_cache", "memory_high_mb"): 2560,
 }
@@ -426,7 +426,6 @@ class TestTemplateIsComplete:
         allowed_outside_default_config = {
             ("session_reset",),
             ("session_reset", "mode"),
-            ("session_reset", "idle_minutes"),
             ("display", "tool_progress"),
             ("display", "cleanup_progress"),
             ("platform_hints", "telegram"),
@@ -655,13 +654,11 @@ class TestToolLoopGuardrails:
 
 
 class TestSessionResetSection:
-    """Заброшенная тема обязана однажды начаться заново — сама.
+    """Разговор живёт, пока клиент сам не начнёт новый — как в ChatGPT.
 
-    Клиент ведёт темы в группе Telegram, и каждая тема это отдельный
-    разговор. Апстримный дефолт ``mode: "none"`` значит «не начинать
-    заново никогда»: тема, к которой не вернулись, навсегда остаётся
-    живым разговором и никогда не финализируется. Ежедневного рубежа мы
-    при этом не берём — он обрывал бы тему посреди работы.
+    Решение владельца 28.09.2026: никакого сброса по таймеру — ни после
+    молчания, ни на рубеже суток. Новый разговор начинается только по
+    /new или /reset; прежний при этом сохраняется целиком.
     """
 
     def _policy(self, template):
@@ -676,74 +673,87 @@ class TestSessionResetSection:
 
         return SessionResetPolicy.from_dict(template["session_reset"])
 
-    def test_mode_is_not_the_upstream_never_reset_default(self, template):
-        from gateway.config import SessionResetPolicy
+    def test_mode_is_never_reset(self, template):
+        assert self._policy(template).mode == "none"
 
-        policy = self._policy(template)
-        assert policy.mode != SessionResetPolicy().mode, (
-            "режим сброса совпал с апстримным дефолтом — заброшенная тема "
-            "снова остаётся живым разговором навсегда"
+    def test_a_long_silent_topic_is_not_started_over(self, template, tmp_path):
+        """Поведение, а не значение: тема, молчавшая месяц (это и простой
+        больше любого idle-срока, и десятки пройденных рубежей суток),
+        проходит через настоящий ``SessionStore._should_reset`` и остаётся
+        тем же разговором."""
+        from datetime import datetime, timedelta
+
+        from gateway.config import GatewayConfig, Platform
+        from gateway.session import SessionEntry, SessionSource, SessionStore
+
+        config = GatewayConfig()
+        config.default_reset_policy = self._policy(template)
+        store = SessionStore(sessions_dir=tmp_path, config=config)
+        entry = SessionEntry(
+            session_key="topic",
+            session_id="s1",
+            created_at=datetime.now() - timedelta(days=60),
+            updated_at=datetime.now() - timedelta(days=30),
         )
-        assert policy.mode == "idle"
-
-    def test_the_daily_boundary_is_deliberately_not_used(self, template):
-        """«idle», а не «daily»/«both»: рубеж суток обрывает тему посреди
-        работы — вернулись к ней наутро, а разговор уже начат заново."""
-        assert "daily" not in self._policy(template).mode
-        assert "at_hour" not in template["session_reset"], (
-            "at_hour в шаблоне ничего не делает при mode: idle и читается "
-            "клиентом как обещание ежедневного рубежа, которого нет"
-        )
-
-    def test_the_span_outlasts_a_weekend(self, template):
-        """Отношение, а не снимок значения: пятница вечер — понедельник
-        утро это 64 часа. Любой срок короче означает, что рабочая тема
-        начинается заново каждые выходные."""
-        weekend_minutes = 64 * 60
-        assert self._policy(template).idle_minutes > weekend_minutes
-
-    def test_the_span_is_longer_than_a_day(self, template):
-        """Отдельно от выходных: срок в сутки и меньше рвал бы тему,
-        к которой вернулись на следующий день."""
-        from gateway.config import SessionResetPolicy
-
-        policy = self._policy(template)
-        assert policy.idle_minutes > 24 * 60
-        assert policy.idle_minutes > SessionResetPolicy().idle_minutes, (
-            "срок не превышает апстримные сутки — строка в шаблоне ничего "
-            "не даёт сверх дефолта"
+        source = SessionSource(
+            platform=Platform.TELEGRAM, chat_id="123", user_id="u1"
         )
 
-    def test_the_client_is_told_before_the_conversation_starts_over(self, template):
-        """Уведомление — то, из-за чего вся секция безопасна для клиента.
-        Оно приходит по апстримному дефолту ``notify``, поэтому в шаблоне
-        его нет; проверяем, что дефолт всё ещё такой."""
-        assert self._policy(template).notify is True, (
-            "уведомление о новом разговоре выключено — тема начиналась бы "
-            "заново молча"
-        )
+        assert store._should_reset(entry, source) is None
 
-    def test_the_notice_the_client_will_read_names_this_very_span(self, template):
-        """Связь шаблона с текстом: сколько стоит в конфиге, столько и
-        произносится клиенту. Отдельный литерал «трое суток» в тесте свёл
-        бы пару только на бумаге — нужен вызов продуктового кода."""
-        from hermes_cli.trix_session_notices import duration_phrase
-
-        rendered = duration_phrase(
-            template["session_reset"]["idle_minutes"], lang="ru"
-        )
-        assert rendered == "трое суток", rendered
+    def test_no_timer_settings_promise_a_reset_that_never_comes(self, template):
+        """При ``mode: none`` ``idle_minutes`` и ``at_hour`` ничего не
+        делают, а клиент читает их как обещание сброса по таймеру."""
+        section = template["session_reset"]
+        assert "idle_minutes" not in section
+        assert "at_hour" not in section
 
 
 class TestApprovalsSection:
-    def test_mode_is_manual(self, template):
-        """Подтверждение спрашивает человека, а не вспомогательную модель.
+    def test_mode_is_off(self, template):
+        """Новые конфиги создаются с выключенными подтверждениями.
 
-        smart отдал бы вердикт основной модели клиента (auxiliary.approval
+        Решение владельца (RAF-181, 2026-09-16): подтверждения не должны
+        останавливать агента вопросами — «всякие rm -rf и так будут у нас
+        работать». Ни один из трёх режимов клиенту не помогал: manual
+        спрашивал живого человека перед удалением в рабочей папке, smart
+        отдал бы вердикт основной модели клиента (auxiliary.approval
         .provider: auto) — за его деньги и с правом самой одобрить то самое
         удаление, ради которого правило заведено.
+
+        off НЕ снимает защиту целиком: жёсткий запрет (hardline floor —
+        rm -rf /, fork-бомбы и т.п.) и approvals.deny срабатывают до
+        bypass'а mode=off (tools/approval.py), а досев не меняет mode
+        уже установленных машин — см. test_trix_config_sync.py.
         """
-        assert template["approvals"]["mode"] == "manual"
+        assert template["approvals"]["mode"] == "off"
+
+    def test_off_mode_survives_a_wizard_style_save(self, tmp_path, monkeypatch):
+        """Сквозь настоящую запись мастера: off переживает save_config.
+
+        Мастер настройки правит конфиг «на живую» — load_config, правки,
+        save_config. Значение обязано уцелеть (оно отлично от умолчания
+        апстрима, поэтому strip_defaults его не вырезает), а вместе с ним —
+        и комментарий, объясняющий клиенту, что именно выключено и что
+        продолжает его охранять.
+        """
+        import shutil
+
+        from hermes_constants import get_hermes_home
+
+        monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+        get_hermes_home().mkdir(parents=True, exist_ok=True)
+        shutil.copy(TRIX_TEMPLATE_PATH, get_hermes_home() / "config.yaml")
+
+        from hermes_cli.config import load_config, save_config
+
+        cfg = load_config()
+        cfg["model"] = {"provider": "openrouter", "model": "test-model"}
+        save_config(cfg)
+
+        text = (get_hermes_home() / "config.yaml").read_text(encoding="utf-8")
+        assert yaml.safe_load(text)["approvals"]["mode"] == "off"
+        assert "независимо от" in text
 
     def test_timeout_matches_default_config(self, template):
         """timeout: 300 is a documentation pin, not a behavioral override.
@@ -831,35 +841,45 @@ class TestTemplateCommentsMatchBehavior:
             f"пример в комментарии разошёлся с продуктом: ожидается {rendered!r}"
         )
 
-    def test_approvals_comment_admits_cron_denies_instead_of_asking(self, template_text):
-        """В задаче по расписанию человека нет, и удаление БЛОКИРУЕТСЯ.
+    def test_approvals_comment_names_what_still_blocks_with_mode_off(self, template_text):
+        """mode: off выключает вопросы, но не защиту — комментарий обязан
+        сказать клиенту и то, и другое.
 
-        Комментарий, обещающий вопрос, обещает клиенту то, чего в этом
-        сценарии не произойдёт. Привязываемся к настоящему режиму cron, а не
-        к литералу: если продукт когда-нибудь начнёт спрашивать — тест
-        покажет, что комментарий пора переписать обратно.
+        Клиент читает config.yaml как документацию. Слово «намеренно»
+        защищает от трактовки «забыли включить»; перечисление того, что
+        продолжает блокироваться (жёсткие запреты и deny), — от трактовки
+        «теперь можно всё».
         """
-        assert DEFAULT_CONFIG["approvals"]["cron_mode"] == "deny", (
-            "продукт начал спрашивать в cron — комментарий шаблона пора "
-            "переписывать обратно"
-        )
         approvals_comment = template_text.split("approvals:", 1)[1].split("mode:", 1)[0]
-        assert "по расписанию" in approvals_comment, (
-            "комментарий про подтверждения молчит про задачи по расписанию, "
-            "где спросить некого и удаление блокируется"
+        lowered = approvals_comment.lower()
+        assert "намеренно" in lowered, (
+            "комментарий не говорит, что подтверждения выключены намеренно"
+        )
+        assert "жёстк" in lowered or "жестк" in lowered, (
+            "комментарий молчит про жёсткие запреты, которые mode не снимает"
+        )
+        assert "deny" in lowered, (
+            "комментарий молчит про approvals.deny, который mode не снимает"
         )
 
-    def test_agent_hint_warns_about_the_deletion_prompt(self, template):
-        """Подсказка агенту обязана упомянуть сторож удаления.
+    def test_agent_hint_warns_deletion_is_irreversible_and_asks_nobody(self, template):
+        """Подсказка агенту обязана знать, что удаление никто не перехватит.
 
-        Без этого агент не может предупредить собеседника заранее и не
-        понимает, почему получил отказ, — он про правило просто не знает.
+        При approvals.mode: off (решение владельца, RAF-181) вопрос
+        собеседнику перед удалением не задаётся — подсказка, обещающая
+        подтверждение, отправляла бы агента ждать вопроса, которого не
+        будет. Предупредить об необратимости — теперь единственная защита
+        момента, и она обязана остаться в подсказке.
         """
         hint = template["platform_hints"]["telegram"]["append"]
         lowered = hint.lower()
-        assert "удал" in lowered and "подтвержд" in lowered, (
+        assert "удал" in lowered and "восстанов" in lowered, (
             "подсказка не говорит агенту, что удаление в рабочей папке "
-            "вызовет вопрос собеседнику"
+            "необратимо"
+        )
+        assert "подтверждени" not in lowered, (
+            "подсказка обещает подтверждение, которого при mode: off "
+            "не будет"
         )
 
 

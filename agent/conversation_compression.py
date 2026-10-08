@@ -107,7 +107,18 @@ def _emit_compaction_done(agent: Any) -> None:
     if not status_callback:
         return
     try:
-        status_callback("compacted", COMPACTION_DONE_STATUS)
+        # RAF-221: this line is a deliberate carve-out from the gateway
+        # noise filter (the customer is meant to see it), so it renders
+        # through the catalog.
+        from agent.i18n import t
+
+        status_callback(
+            "compacted",
+            t(
+                "trix.agent.compaction_done",
+                default=COMPACTION_DONE_STATUS,
+            ),
+        )
     except Exception:
         logger.debug("status_callback error in compaction completion", exc_info=True)
 
@@ -162,6 +173,49 @@ CONTEXT_OVERFLOW_BLOCKED_WARNING_TEMPLATE = (
     "The model may stop responding. Run /new to start a fresh "
     "session or /compress to retry immediately."
 )
+
+
+def _localized_context_overflow_blocked_warning(
+    *, tokens: int, threshold: int, reason: str,
+) -> str:
+    """RAF-221: client-language render of the blocked-overflow warning.
+
+    The raw ``reason`` comes from ``ContextCompressor
+    ._compression_block_reason()`` and is machine-shaped English
+    (``"cooldown:30"`` / ``"ineffective"``). Splicing it into a Russian
+    sentence produces mixed jargon, so the two known shapes map to catalog
+    phrases and anything else rides through ``...reason_unknown``.
+    """
+    from agent.i18n import t
+
+    reason_key = (reason or "").split(":", 1)[0]
+    if reason_key == "cooldown":
+        seconds = (reason or "").split(":", 1)[1] if ":" in (reason or "") else ""
+        reason_display = t(
+            "trix.agent.context_overflow_reason_cooldown",
+            seconds=seconds,
+            default=f"summary model cooling down after a failure, {seconds}s left",
+        )
+    elif reason_key == "ineffective":
+        reason_display = t(
+            "trix.agent.context_overflow_reason_ineffective",
+            default="recent compressions barely reduced the context",
+        )
+    else:
+        reason_display = t(
+            "trix.agent.context_overflow_reason_unknown",
+            reason=reason,
+            default=str(reason),
+        )
+    return t(
+        "trix.agent.context_overflow_blocked",
+        tokens=f"{tokens:,}",
+        threshold=f"{threshold:,}",
+        reason=reason_display,
+        default=CONTEXT_OVERFLOW_BLOCKED_WARNING_TEMPLATE.format(
+            tokens=tokens, threshold=threshold, reason=reason,
+        ),
+    )
 
 # Sample-formatted instances of every routine compression status line, for
 # behavioral tests that iterate the ACTUAL emitted wording (formatted from the
@@ -3030,10 +3084,17 @@ def compress_context(
                 _err = getattr(agent.context_compressor, "_last_summary_error", None) or "unknown error"
                 if getattr(agent, "_last_compression_summary_warning", None) != _err:
                     agent._last_compression_summary_warning = _err
+                    from agent.i18n import t
+
                     agent._emit_warning(
-                        f"⚠ Compression aborted: {_err}. "
-                        "No messages were dropped — conversation continues unchanged. "
-                        "Run /compress to retry, or /new to start a fresh session."
+                        t(
+                            "trix.agent.compression_aborted_turn",
+                            default=(
+                                "⚠ Context compression could not finish. No messages "
+                                "were dropped — the conversation is unchanged. Run "
+                                "/compress to retry, or /new to start a fresh session."
+                            ),
+                        )
                     )
                 _existing_sp = getattr(agent, "_cached_system_prompt", None)
                 if not _existing_sp:
@@ -3083,9 +3144,17 @@ def compress_context(
                 agent.session_id or "none",
             )
             try:
+                from agent.i18n import t
+
                 agent._emit_warning(
-                    "⚠ Compression returned an empty transcript. "
-                    "No session split was performed; conversation continues unchanged."
+                    t(
+                        "trix.agent.compression_empty_transcript",
+                        default=(
+                            "⚠ Compression returned an empty transcript. "
+                            "No session split was performed; conversation "
+                            "continues unchanged."
+                        ),
+                    )
                 )
             except Exception:
                 pass
@@ -3783,8 +3852,16 @@ def _compress_context_via_codex_app_server(
 
     if getattr(result, "interrupted", False) or getattr(result, "error", None):
         try:
+            from agent.i18n import t
+
             agent._emit_warning(
-                f"⚠ Codex app-server compaction failed: {result.error}"
+                t(
+                    "trix.agent.codex_compaction_failed",
+                    default=(
+                        "⚠ Context compression could not finish. The conversation "
+                        "is unchanged — please try again later."
+                    ),
+                )
             )
         except Exception:
             pass
